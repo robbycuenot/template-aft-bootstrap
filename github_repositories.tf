@@ -14,6 +14,7 @@ resource "github_repository" "aft-account-customizations" {
 
   lifecycle {
     prevent_destroy = true
+    ignore_changes = [ template ]
   }
 }
 
@@ -33,6 +34,7 @@ resource "github_repository" "aft-account-provisioning-customizations" {
 
   lifecycle {
     prevent_destroy = true
+    ignore_changes = [ template ]
   }
 }
 
@@ -52,6 +54,7 @@ resource "github_repository" "aft-account-requests" {
 
   lifecycle {
     prevent_destroy = true
+    ignore_changes = [ template ]
   }
 }
 
@@ -72,6 +75,7 @@ resource "github_repository" "aft-framework" {
 
   lifecycle {
     prevent_destroy = true
+    ignore_changes = [ template ]
   }
 }
 
@@ -91,5 +95,6 @@ resource "github_repository" "aft-global-customizations" {
 
   lifecycle {
     prevent_destroy = true
+    ignore_changes = [ template ]
   }
 }

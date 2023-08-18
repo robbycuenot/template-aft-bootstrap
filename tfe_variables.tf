@@ -4,6 +4,10 @@ resource "tfe_variable" "AWS_ACCESS_KEY_ID" {
   category     = "env"
   workspace_id = tfe_workspace.aft-framework.id
   description  = "AWS Access Key ID"
+
+  lifecycle {
+    ignore_changes = [ value ]
+  }
 }
 
 resource "tfe_variable" "AWS_REGION" {
@@ -12,6 +16,10 @@ resource "tfe_variable" "AWS_REGION" {
   category     = "env"
   workspace_id = tfe_workspace.aft-framework.id
   description  = "AWS Control Tower Region"
+
+  lifecycle {
+    ignore_changes = [ value ]
+  }
 }
 
 resource "tfe_variable" "AWS_SECRET_ACCESS_KEY" {
@@ -21,6 +29,10 @@ resource "tfe_variable" "AWS_SECRET_ACCESS_KEY" {
   workspace_id = tfe_workspace.aft-framework.id
   description  = "AWS Secret Access Key"
   sensitive    = true
+
+  lifecycle {
+    ignore_changes = [ value ]
+  }
 }
 
 resource "tfe_variable" "AWS_SESSION_TOKEN" {
@@ -30,6 +42,10 @@ resource "tfe_variable" "AWS_SESSION_TOKEN" {
   workspace_id = tfe_workspace.aft-framework.id
   description  = "AWS Session Token"
   sensitive    = true
+
+  lifecycle {
+    ignore_changes = [ value ]
+  }
 }
 
 resource "tfe_variable" "terraform_token" {
@@ -39,4 +55,112 @@ resource "tfe_variable" "terraform_token" {
   workspace_id = tfe_workspace.aft-framework.id
   description  = "Terraform Team Token"
   sensitive    = true
+}
+
+resource "tfe_variable" "repo_aft_account_customizations" {
+  key          = "repo_aft_account_customizations"
+  value        = github_repository.aft-account-customizations.full_name
+  category     = "terraform"
+  workspace_id = tfe_workspace.aft-framework.id
+  description  = "Repository for AFT Account Customizations"
+
+  lifecycle {
+    ignore_changes = [ value ]
+  }
+}
+
+resource "tfe_variable" "repo_aft_account_provisioning_customizations" {
+  key          = "repo_aft_account_provisioning_customizations"
+  value        = github_repository.aft-account-provisioning-customizations.full_name
+  category     = "terraform"
+  workspace_id = tfe_workspace.aft-framework.id
+  description  = "Repository for AFT Account Provisioning Customizations"
+
+  lifecycle {
+    ignore_changes = [ value ]
+  }
+}
+
+resource "tfe_variable" "repo_aft_account_requests" {
+  key          = "repo_aft_account_requests"
+  value        = github_repository.aft-account-requests.full_name
+  category     = "terraform"
+  workspace_id = tfe_workspace.aft-framework.id
+  description  = "Repository for AFT Account Requests"
+
+  lifecycle {
+    ignore_changes = [ value ]
+  }
+}
+
+resource "tfe_variable" "repo_aft_framework" {
+  key          = "repo_aft_framework"
+  value        = github_repository.aft-framework.full_name
+  category     = "terraform"
+  workspace_id = tfe_workspace.aft-framework.id
+  description  = "Repository for AFT Framework"
+
+  lifecycle {
+    ignore_changes = [ value ]
+  }
+}
+
+resource "tfe_variable" "repo_aft_global_customizations" {
+  key          = "repo_aft_global_customizations"
+  value        = github_repository.aft-global-customizations.full_name
+  category     = "terraform"
+  workspace_id = tfe_workspace.aft-framework.id
+  description  = "Repository for AFT Global Customizations"
+
+  lifecycle {
+    ignore_changes = [ value ]
+  }
+}
+
+resource "tfe_variable" "ct_management_account_id" {
+  key          = "ct_management_account_id"
+  value        = ""
+  category     = "terraform"
+  workspace_id = tfe_workspace.aft-framework.id
+  description  = "Control Tower Management Account ID"
+
+  lifecycle {
+    ignore_changes = [ value ]
+  }
+}
+
+resource "tfe_variable" "log_archive_account_id" {
+  key          = "log_archive_account_id"
+  value        = ""
+  category     = "terraform"
+  workspace_id = tfe_workspace.aft-framework.id
+  description  = "Control Tower Log Archive Account ID"
+
+  lifecycle {
+    ignore_changes = [ value ]
+  }
+}
+
+resource "tfe_variable" "audit_account_id" {
+  key          = "audit_account_id"
+  value        = ""
+  category     = "terraform"
+  workspace_id = tfe_workspace.aft-framework.id
+  description  = "Control Tower Audit Account ID"
+
+  lifecycle {
+    ignore_changes = [ value ]
+  }
+}
+
+resource "tfe_variable" "aft_management_account_id" {
+  key          = "aft_management_account_id"
+  value        = ""
+  category     = "terraform"
+  workspace_id = tfe_workspace.aft-framework.id
+  description  = "Control Tower AFT Management Account ID"
+
+  lifecycle {
+    ignore_changes = [ value ]
+  }
 }

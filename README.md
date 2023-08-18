@@ -1,5 +1,4 @@
-# template-aft-bootstrap
-Terraform module for bootstrapping Account Factory for Terraform (AFT)
+# aft-bootstrap
 
 Purpose: Lay down the base resources for aft-framework
 

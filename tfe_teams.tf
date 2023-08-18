@@ -15,4 +15,8 @@ resource "tfe_team" "aft-admin" {
     manage_projects = false
     manage_membership = false
   }
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }

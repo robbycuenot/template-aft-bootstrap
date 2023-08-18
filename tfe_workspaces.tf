@@ -12,4 +12,8 @@ resource "tfe_workspace" "aft-framework" {
     github_app_installation_id = data.tfe_workspace.current_workspace.vcs_repo[0].github_app_installation_id
     branch = "main"
   }
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
