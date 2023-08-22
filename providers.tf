@@ -8,6 +8,7 @@ terraform {
       source  = "hashicorp/tfe"
       version = "0.48.0"
     }
+  }
 }
 
 provider "github" {
