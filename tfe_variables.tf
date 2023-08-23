@@ -164,3 +164,16 @@ resource "tfe_variable" "aft_management_account_id" {
     ignore_changes = [ value ]
   }
 }
+
+resource "tfe_variable" "github_token" {
+  key             = "github_token"
+  value           = var.github_token
+  category        = "terraform"
+  variable_set_id = tfe_variable_set.github.id
+  description     = "GitHub Token for creating account repos"
+  sensitive       = true
+
+  lifecycle {
+    ignore_changes = [ value ]
+  }
+}
