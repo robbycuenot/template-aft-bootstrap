@@ -52,7 +52,7 @@ resource "tfe_variable" "terraform_token" {
   key          = "terraform_token"
   value        = tfe_team_token.aft-admin.token
   category     = "terraform"
-  workspace_id = tfe_workspace.aft-framework.id
+  variable_set_id = tfe_variable_set.aft.id
   description  = "Terraform Team Token"
   sensitive    = true
 }
@@ -169,8 +169,21 @@ resource "tfe_variable" "github_token" {
   key             = "github_token"
   value           = var.github_token
   category        = "terraform"
-  variable_set_id = tfe_variable_set.github.id
+  variable_set_id = tfe_variable_set.aft.id
   description     = "GitHub Token for creating account repos"
+  sensitive       = true
+
+  lifecycle {
+    ignore_changes = [ value ]
+  }
+}
+
+resource "tfe_variable" "github_installation_id" {
+  key             = "github_installation_id"
+  value           = data.tfe_workspace.current_workspace.vcs_repo[0].github_app_installation_id
+  category        = "terraform"
+  variable_set_id = tfe_variable_set.aft.id
+  description     = "GitHub installation ID"
   sensitive       = true
 
   lifecycle {
