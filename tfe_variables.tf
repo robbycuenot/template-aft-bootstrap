@@ -190,3 +190,16 @@ resource "tfe_variable" "github_installation_id" {
     ignore_changes = [ value ]
   }
 }
+
+resource "tfe_variable" "github_owner" {
+  key             = "github_owner"
+  value           = local.github_owner
+  category        = "terraform"
+  variable_set_id = tfe_variable_set.aft.id
+  description     = "Github Owner"
+  sensitive       = false
+
+  lifecycle {
+    ignore_changes = [ value ]
+  }
+}
