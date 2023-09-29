@@ -6,6 +6,6 @@ resource "tfe_team_project_access" "aft-admin" {
 
 resource "tfe_team_project_access" "workloads" {
   access       = "admin"
-  team_id      = tfe_team.aft-admin.id
+  team_id      = tfe_team.aft-admin-workloads.id
   project_id   = tfe_project.workloads.id
 }

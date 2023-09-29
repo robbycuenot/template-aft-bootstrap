@@ -5,7 +5,6 @@ resource "github_repository" "aft-account-customizations" {
   has_downloads = true
   has_issues  = true
   has_projects = true
-  has_wiki    = true
 
   template {
     owner = local.templates_organization
@@ -25,7 +24,6 @@ resource "github_repository" "aft-account-provisioning-customizations" {
   has_downloads = true
   has_issues  = true
   has_projects = true
-  has_wiki    = true
 
   template {
     owner = local.templates_organization
@@ -45,7 +43,6 @@ resource "github_repository" "aft-account-requests" {
   has_downloads = true
   has_issues  = true
   has_projects = true
-  has_wiki    = true
 
   template {
     owner = local.templates_organization
@@ -66,7 +63,6 @@ resource "github_repository" "aft-framework" {
   has_downloads = true
   has_issues  = true
   has_projects = true
-  has_wiki    = true
 
   template {
     owner = local.templates_organization
@@ -86,7 +82,6 @@ resource "github_repository" "aft-global-customizations" {
   has_downloads = true
   has_issues  = true
   has_projects = true
-  has_wiki    = true
 
   template {
     owner = local.templates_organization

@@ -8,6 +8,12 @@ variable "github_token" {
   sensitive    = true
 }
 
+variable "tfc_workloads_organization_name" {
+  description = "The name of the workloads organization in Terraform Cloud."
+  type        = string
+  default     = ""
+}
+
 variable "TFC_WORKSPACE_SLUG" {
   description = "DO NOT SET - Managed by TFC - Terraform Cloud workspace slug"
   sensitive    = true

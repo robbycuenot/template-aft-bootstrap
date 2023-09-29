@@ -2,6 +2,62 @@
 
 ## Purpose: Lay down the base resources for aft-framework
 
+```mermaid
+graph LR
+
+    subgraph tf-example-org
+        A[aft-bootstrap]
+    end
+
+    subgraph github-aft
+        direction LR
+        K[aft-framework]
+        L[aft-account-customizations]
+        M[aft-account-provisioning-customizations]
+        N[aft-global-customizations]
+        O[aft-account-requests]
+    end
+
+    subgraph tf-example-org-aft
+        B[aft-framework]
+        G[ct-aft-account-requests]
+        H["ct-aft-account-provisioning-customizations *unused*"]
+        subgraph global-customizations [global-customizations *unused*]
+            I[123456789012-global-customizations]
+        end
+        subgraph account-customizations
+            J[123456789012-account-customizations]
+        end
+    end
+
+    subgraph aws-org
+        Q[sandbox-123456789012]
+    end
+
+    subgraph tf-example-org-workloads
+        C[sandbox-123456789012]
+    end
+    
+    subgraph github-workloads
+        P[sandbox-123456789012]
+    end
+
+    A --creates org, teams, aft-framework workspace--> tf-example-org-aft
+    A --creates org, teams--> tf-example-org-workloads
+    A --creates repos\nfrom templates--> github-aft
+    B --> G
+    B --> H
+    B --> global-customizations
+    B --> account-customizations
+    J --creates\nworkspace--> C
+    github-aft --repos link\nto workspaces--> tf-example-org-aft
+    P --repo links\nto workspace--> C
+    J --creates\nrepoo--> P
+    G --creates\naccount--> Q
+    J --creates OIDC\npolicies and role--> Q
+    C --deploys to AWS account\nwith OIDC--> Q
+```
+
 1. Choose an email address for AFT
 1. Create AFT HashiCorp user with that email
    1. Verify the email address
