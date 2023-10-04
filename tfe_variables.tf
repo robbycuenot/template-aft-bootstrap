@@ -66,6 +66,15 @@ resource "tfe_variable" "terraform_workloads_token" {
   sensitive    = true
 }
 
+resource "tfe_variable" "terraform_workloads_org_name" {
+  key          = "terraform_workloads_org_name"
+  value        = tfe_organization.workloads.name
+  category     = "terraform"
+  variable_set_id = tfe_variable_set.aft.id
+  description  = "Terraform Workloads Organization Name"
+  sensitive    = false
+}
+
 resource "tfe_variable" "repo_aft_account_customizations" {
   key          = "repo_aft_account_customizations"
   value        = github_repository.aft-account-customizations.full_name

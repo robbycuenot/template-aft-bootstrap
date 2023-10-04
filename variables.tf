@@ -21,6 +21,6 @@ variable "TFC_WORKSPACE_SLUG" {
 }
 
 variable "tfe_token" {
-  description = "Terraform Cloud API token"
+  description = "Terraform Cloud Owner User API token"
   sensitive    = true
 }
