@@ -1,6 +1,6 @@
 resource "tfe_workspace" "aft-framework" {
   name         = "aft-framework"
-  organization = data.tfe_organization.current_organization.name
+  organization = tfe_organization.aft.name
   allow_destroy_plan            = false
   assessments_enabled           = false
   auto_apply                    = false

@@ -26,6 +26,7 @@ locals {
   tfc_workspace_slug_split = split("/", var.TFC_WORKSPACE_SLUG)
   tfc_current_organization_name    = local.tfc_workspace_slug_split[0]
   tfc_current_workspace_name       = local.tfc_workspace_slug_split[1]
+  tfc_aft_organization_name = var.tfc_aft_organization_name != "" ? var.tfc_aft_organization_name : "${local.tfc_current_organization_name}-aft"
   tfc_workloads_organization_name = var.tfc_workloads_organization_name != "" ? var.tfc_workloads_organization_name : "${local.tfc_current_organization_name}-workloads"
 
   github_identifier = data.tfe_workspace.current_workspace.vcs_repo["0"].identifier

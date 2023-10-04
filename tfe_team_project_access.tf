@@ -1,11 +1,11 @@
 resource "tfe_team_project_access" "aft-admin" {
   access       = "admin"
   team_id      = tfe_team.aft-admin.id
-  project_id   = data.tfe_organization.current_organization.default_project_id
+  project_id   = tfe_organization.aft.default_project_id
 }
 
-resource "tfe_team_project_access" "workloads" {
+resource "tfe_team_project_access" "aft-workloads" {
   access       = "admin"
-  team_id      = tfe_team.aft-admin-workloads.id
-  project_id   = tfe_project.workloads.id
+  team_id      = tfe_team.aft-workloads.id
+  project_id   = tfe_organization.workloads.default_project_id
 }

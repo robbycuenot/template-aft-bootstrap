@@ -48,12 +48,21 @@ resource "tfe_variable" "AWS_SESSION_TOKEN" {
   }
 }
 
-resource "tfe_variable" "terraform_token" {
-  key          = "terraform_token"
+resource "tfe_variable" "terraform_aft_token" {
+  key          = "terraform_aft_token"
   value        = tfe_team_token.aft-admin.token
   category     = "terraform"
   variable_set_id = tfe_variable_set.aft.id
   description  = "Terraform Team Token"
+  sensitive    = true
+}
+
+resource "tfe_variable" "terraform_workloads_token" {
+  key          = "terraform_workloads_token"
+  value        = tfe_team_token.aft-workloads.token
+  category     = "terraform"
+  variable_set_id = tfe_variable_set.aft.id
+  description  = "Terraform Workloads Team Token"
   sensitive    = true
 }
 

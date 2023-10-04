@@ -1,6 +1,6 @@
 resource "tfe_team" "aft-admin" {
-  name         = "aft-admin"
-  organization = data.tfe_organization.current_organization.name
+  name         = "aft"
+  organization = tfe_organization.aft.name
   visibility   = "secret"
   organization_access {
     manage_policies = false
@@ -19,8 +19,8 @@ resource "tfe_team" "aft-admin" {
   }
 }
 
-resource "tfe_team" "aft-admin-workloads" {
-  name         = "aft-admin"
+resource "tfe_team" "aft-workloads" {
+  name         = "aft"
   organization = tfe_organization.workloads.name
   visibility   = "secret"
   organization_access {
