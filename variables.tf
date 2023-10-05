@@ -1,3 +1,13 @@
+variable "aft_user_email" {
+  description = "Email of the AFT Terraform Cloud user"
+  sensitive = false
+}
+
+variable "aft_user_token" {
+  description = "AFT Terraform Cloud user token"
+  sensitive = true
+}
+
 variable "github_token" {
   description = "GitHub personal access token"
   sensitive    = true

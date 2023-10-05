@@ -6,7 +6,7 @@ resource "tfe_team" "aft-admin" {
     manage_policies = false
     manage_policy_overrides = false
     manage_workspaces = true
-    manage_vcs_settings = false
+    manage_vcs_settings = true
     manage_providers = false
     manage_modules = false
     manage_run_tasks = false
@@ -27,7 +27,7 @@ resource "tfe_team" "aft-workloads" {
     manage_policies = false
     manage_policy_overrides = false
     manage_workspaces = true
-    manage_vcs_settings = false
+    manage_vcs_settings = true
     manage_providers = false
     manage_modules = false
     manage_run_tasks = false
