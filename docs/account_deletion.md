@@ -208,3 +208,19 @@ source-aft
     1. Review the changes
     1. Type `yes`
 
+## Section 7: Remove IAM Identity Center Permission Sets
+
+    This is another optional step, but highly recommended. If you do not remove the permission set assignments, the account will continue to show up in the SSO portal until the account has been permanently closed after 90 days.
+
+    1. Remove all permission set assignments from the account in IAM Identity Center
+
+## Section 8: Unmanaging the Account
+
+    1. Navigate to the provisioned product in Service Catalog
+    1. Terminate the provisioned product for the account
+
+## Section 9: Closing the Account
+
+    1. Navigate to the Control Tower menu in the Management Account
+    1. Select the account
+    1. Close the account
