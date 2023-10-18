@@ -11,6 +11,7 @@ declare -A files=(
     ["groups_import"]="aws_identitystore_groups_import.tf"
     ["group_memberships"]="aws_identitystore_group_memberships.tf"
     ["group_memberships_map"]="aws_identitystore_group_memberships_map.tf"
+    ["group_memberships_map_scim"]="aws_identitystore_group_memberships_map_scim.tf"
     ["group_memberships_flattened"]="aws_identitystore_group_memberships_flattened.tf"
     ["group_memberships_import"]="aws_identitystore_group_memberships_import.tf"
     ["users"]="aws_identitystore_users.tf"
@@ -53,6 +54,9 @@ locals {
     write_content "${files[group_memberships_map]}" 'locals {
   group_memberships_map = {'
 
+    write_content "${files[group_memberships_map_scim]}" 'locals {
+  group_memberships_map_scim = {'
+
     write_content "${files[users_map]}" 'locals {
   users_map = {'
 
@@ -91,6 +95,11 @@ write_closing_content() {
 
     # Finish the Terraform group memberships map file
     write_content "${files[group_memberships_map]}" '
+  }
+}'
+
+    # Finish the Terraform group memberships map scim file
+    write_content "${files[group_memberships_map_scim]}" '
   }
 }'
 }
@@ -339,26 +348,44 @@ process_group() {
         membershipUserName=$(jq -r '.UserName' <<< "$membershipUser")
         sanitizedMembershipUserName=$(sanitize_for_terraform "$membershipUserName")    
 
-        # Write the group membership import block
-        printf '%s\n' \
-        "import {" \
-        "  to = aws_identitystore_group_membership.controller[\"${sanitizedGroupDisplayName}___${sanitizedMembershipUserName}\"]" \
-        "  id = \"$identityStoreId/$membershipId\"" \
-        "}" \
-        "" \
-        >> ${files[group_memberships_import]}
+        if [ "$isSCIM" != "true" ]; then
+            # Write the group membership import block
+            printf '%s\n' \
+            "import {" \
+            "  to = aws_identitystore_group_membership.controller[\"${sanitizedGroupDisplayName}___${sanitizedMembershipUserName}\"]" \
+            "  id = \"$identityStoreId/$membershipId\"" \
+            "}" \
+            "" \
+            >> ${files[group_memberships_import]}
+        fi
 
     done
 
     # Alphabetize the responses based on username
     membershipUsers=$(echo "$membershipUsers" | jq -s -c 'sort_by(.UserName)[]')
     membershipUserNames=$(echo $membershipUsers | jq -r '.UserName')
-    echo "    \"$sanitizedGroupDisplayName\" = [" >> ${files[group_memberships_map]}
-    for membershipUserName in $membershipUserNames; do
-        sanitizedMembershipUserName=$(sanitize_for_terraform "$membershipUserName")
-        echo "      \"$sanitizedMembershipUserName\"," >> ${files[group_memberships_map]}
-    done
-    echo "    ]," >> ${files[group_memberships_map]}
+    if [ "$isSCIM" == "true" ]; then
+        # Generate a mapping for SCIM managed group memberships
+        echo "    \"$sanitizedGroupDisplayName\" = [" >> ${files[group_memberships_map_scim]}
+        for membershipUserName in $membershipUserNames; do
+            sanitizedMembershipUserName=$(sanitize_for_terraform "$membershipUserName")
+            echo "      \"$sanitizedMembershipUserName\"," >> ${files[group_memberships_map_scim]}
+        done
+    else
+        # Generate a mapping for non-SCIM managed group memberships
+        echo "    \"$sanitizedGroupDisplayName\" = [" >> ${files[group_memberships_map]}
+        for membershipUserName in $membershipUserNames; do
+            sanitizedMembershipUserName=$(sanitize_for_terraform "$membershipUserName")
+            echo "      \"$sanitizedMembershipUserName\"," >> ${files[group_memberships_map]}
+        done
+    fi
+    
+    # Close the group membership mapping
+    if [ "$isSCIM" == "true" ]; then
+        echo "    ]," >> ${files[group_memberships_map_scim]}
+    else
+        echo "    ]," >> ${files[group_memberships_map]}
+    fi
 }
 
 fetch_and_process_users() {
