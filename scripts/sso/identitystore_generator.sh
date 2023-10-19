@@ -1,19 +1,20 @@
 #!/bin/bash
 
 # -----------------------------------------------------------------------------
-# Script Name: identitystore_processor.sh
-# Description: This script processes users and groups from AWS Identity Store.
-# Usage: ./identitystore_processor.sh
+# Script Name: identitystore_generator.sh
+# Description: Processes users, groups, and memberships from AWS Identity Store
+# Usage: ./identitystore_generator.sh
 # -----------------------------------------------------------------------------
 
 
 
 # Global Variables/Constants
 # -----------------------------------------------------------------------------
-# Fetch the necessary data using AWS CLI
-identityStoreId=$(aws sso-admin list-instances --query 'Instances[0].IdentityStoreId' --output text)
+identityStoreId=$(aws sso-admin list-instances --query 'Instances[0].IdentityStoreId' --output text) || {
+    echo "Error: Failed to retrieve the identityStoreId. Please check your AWS credentials."
+    exit 1
+}
 
-# Dictionary of output files
 declare -A files=(
     ["instances"]="aws_ssoadmin_instances.tf"
     ["groups"]="aws_identitystore_groups.tf"
@@ -28,25 +29,16 @@ declare -A files=(
     ["users_map"]="aws_identitystore_users_map.tf"
     ["users_import"]="aws_identitystore_users_import.tf"
 )
+
+# Make the identityStoreId and files array immutable
+readonly identityStoreId
+readonly -A files
 # -----------------------------------------------------------------------------
 
 
 
 # Utility Functions
 # -----------------------------------------------------------------------------
-# Check if AWS credentials are valid
-check_aws_credentials() {
-    # Try to get the caller identity using AWS STS
-    aws sts get-caller-identity > /dev/null 2>&1
-
-    # Check the exit status of the last command
-    if [ $? -ne 0 ]; then
-        echo "Error: AWS credentials are not valid or you do not have permission to check your identity."
-        exit 1
-    fi
-}
-
-# Sanitize a string for a Terraform resource ID
 sanitize_for_terraform() {
     local original_name="$1"
     
@@ -56,11 +48,11 @@ sanitize_for_terraform() {
     # Replace invalid characters with underscores
     sanitized_name=$(echo "$sanitized_name" | sed 's/[^a-zA-Z0-9_-]/_/g')
     
-    # Compute a short hash of the original name (first 5 characters of SHA-1 hash)
-    # Disabling this for now, as collisions are unlikely and names should be unique in AWS
+    ## Compute a short hash of the original name (first 5 characters of SHA-1 hash)
+    ## Disabling this for now, as collisions are unlikely and names should be unique in AWS
     # local hash=$(echo -n "$original_name" | sha1sum | cut -c 1-5)
     
-    # Append the hash to the sanitized name
+    ## Append the hash to the sanitized name
     # echo "${sanitized_name}_$hash"
 
     echo "$sanitized_name"
@@ -71,13 +63,11 @@ sanitize_for_terraform() {
 
 # File Initializing / Closing Functions
 # -----------------------------------------------------------------------------
-# Function to write the header to a file
 write_header() {
     local file="$1"
     echo "# Generated Terraform file for AWS IAM Identity Center" > "$file"
 }
 
-# Function to write content to a file
 write_content() {
     local file="$1"
     shift
@@ -87,9 +77,7 @@ $content
 EOM
 }
 
-# Write initial content for all files
 write_initial_content() {
-    # Write headers to all files
     for file in "${files[@]}"; do
         write_header "$file"
     done
@@ -133,9 +121,7 @@ locals {
 }'
 }
 
-# Write closing content for specific files
 write_closing_content() {
-    # Finish the Terraform user map file
     write_content "${files[users_map]}" '
   }
 }'
@@ -145,12 +131,10 @@ write_closing_content() {
   }
 }'
 
-    # Finish the Terraform group memberships map file
     write_content "${files[group_memberships_map]}" '
   }
 }'
 
-    # Finish the Terraform group memberships map scim file
     write_content "${files[group_memberships_map_scim]}" '
   }
 }'
@@ -159,11 +143,67 @@ write_closing_content() {
 
 
 
-# Helper Functions
+# User Helper Functions
 # -----------------------------------------------------------------------------
-# Fetch all users from AWS Identity Store in a paginated manner
+extract_user_optional_root_attributes() {
+    local user_json="$1"
+    declare -n userOptionalAttributesRef="$2"
+
+    userOptionalAttributesRef=(
+        ["formatted"]=$(jq -r '.Name.Formatted' <<< "$user_json")
+        ["honorific_prefix"]=$(jq -r '.Name.HonorificPrefix' <<< "$user_json")
+        ["honorific_suffix"]=$(jq -r '.Name.HonorificSuffix' <<< "$user_json")
+        ["middle_name"]=$(jq -r '.Name.MiddleName' <<< "$user_json")
+        ["locale"]=$(jq -r '.Locale' <<< "$user_json")
+        ["nick_name"]=$(jq -r '.NickName' <<< "$user_json")
+        ["preferred_language"]=$(jq -r '.PreferredLanguage' <<< "$user_json")
+        ["profile_url"]=$(jq -r '.ProfileUrl' <<< "$user_json")
+        ["timezone"]=$(jq -r '.Timezone' <<< "$user_json")
+        ["title"]=$(jq -r '.Title' <<< "$user_json")
+        ["type"]=$(jq -r '.UserType' <<< "$user_json")
+    )
+}
+
+extract_user_email_attributes() {
+    local user_json="$1"
+    declare -n userEmailAttributesRef="$2"
+
+    userEmailAttributesRef=(
+        ["value"]=$(jq -r '.Emails[0].Value' <<< "$user_json")
+        ["primary"]=$(jq -r '.Emails[0].Primary' <<< "$user_json")
+        ["type"]=$(jq -r '.Emails[0].Type' <<< "$user_json")
+    )
+}
+
+extract_user_address_attributes() {
+    local user_json="$1"
+    declare -n userAddressAttributesRef="$2"
+
+    userAddressAttributesRef=(
+        ["value"]=$(jq -r '.Addresses[0].StreetAddress' <<< "$user_json")
+        ["country"]=$(jq -r '.Addresses[0].Country' <<< "$user_json")
+        ["formatted"]=$(jq -r '.Addresses[0].Formatted' <<< "$user_json")
+        ["locality"]=$(jq -r '.Addresses[0].Locality' <<< "$user_json")
+        ["postal_code"]=$(jq -r '.Addresses[0].PostalCode' <<< "$user_json")
+        ["primary"]=$(jq -r '.Addresses[0].Primary' <<< "$user_json")
+        ["region"]=$(jq -r '.Addresses[0].Region' <<< "$user_json")
+        ["street_address"]=$(jq -r '.Addresses[0].StreetAddress' <<< "$user_json")
+        ["type"]=$(jq -r '.Addresses[0].Type' <<< "$user_json")
+    )
+}
+
+extract_user_phone_attributes() {
+    local user_json="$1"
+    declare -n userPhoneAttributesRef="$2"
+
+    userPhoneAttributesRef=(
+        ["value"]=$(jq -r '.PhoneNumbers[0].Value' <<< "$user_json")
+        ["primary"]=$(jq -r '.PhoneNumbers[0].Primary' <<< "$user_json")
+        ["type"]=$(jq -r '.PhoneNumbers[0].Type' <<< "$user_json")
+    )
+}
+
 fetch_all_users() {
-    local identityStoreId="$1"
     local userNextToken=""
     local userResponses=""
 
@@ -172,18 +212,149 @@ fetch_all_users() {
         [ -n "$userNextToken" ] && userResponseArgs+=("--next-token" "$userNextToken")
         
         local userResponse=$(aws identitystore list-users "${userResponseArgs[@]}")
-        userResponses+=$(echo "$userResponse" | jq -r '.Users[]')
+        userResponses+=$(jq -r '.Users[]' <<< "$userResponse")
         
-        userNextToken=$(echo "$userResponse" | jq -r '.NextToken')
+        userNextToken=$(jq -r '.NextToken' <<< "$userResponse")
         [ "$userNextToken" == "null" ] && break
     done
 
     echo "$userResponses"
 }
 
-# Fetch all groups from AWS Identity Store in a paginated manner
+process_users_list() {
+    local usersList="$1"
+
+    # Encode and then decode the JSON to address potential formatting issues
+    local encodedUsers=$(echo "$usersList" | jq -s -c '.' | base64)
+    local decodedUsers=$(echo "$encodedUsers" | base64 --decode)
+
+    local sortedUsers=$(echo "$decodedUsers" | jq -s -c 'sort_by(.[] | .UserName)[]')
+    local totalUsers=$(echo "$sortedUsers" | jq 'length')
+    local processedUsers=0
+
+    # Display the total number of users being processed
+    echo "Processing $totalUsers users:"
+
+    # Initialize progress bar
+    echo -ne '[>-------------------] (0%)\r'
+
+    jq -r '.[] | @base64' <<< "$sortedUsers" | while read -r user_encoded; do
+        local user_decoded=$(echo "$user_encoded" | base64 --decode)
+        process_user "$user_decoded"
+
+        # Update progress bar
+        processedUsers=$((processedUsers + 1))
+        local progress=$((processedUsers * 100 / totalUsers))
+        local progressBar=$(printf '=%.0s' $(seq 1 $((progress / 5))))
+        echo -ne "[${progressBar:0:20}>] ($progress%)\r"
+    done
+
+    # End the progress bar with a newline and display completion message
+    echo -e "\nUser processing complete."
+}
+
+generate_user_map_line() {
+    local sanitizedUserName="$1"
+    local isSCIM="$2"
+    local prefix=""
+
+    [[ "$isSCIM" == "true" ]] && prefix="data."
+
+    printf '%s\n' \
+    "    \"$sanitizedUserName\" = ${prefix}aws_identitystore_user.$sanitizedUserName.user_id" \
+    >> "${files[users_map]}"
+}
+
+generate_user_resource_block() {
+    local userName="$1"
+    local userDisplayName="$2"
+    local userGivenName="$3"
+    local userFamilyName="$4"
+    declare -n userOptionalAttributesRef="$5"
+    declare -n userEmailAttributesRef="$6"
+    declare -n userAddressAttributesRef="$7"
+    declare -n userPhoneAttributesRef="$8"
+
+    {
+        printf "resource \"aws_identitystore_user\" \"%s\" {\n" "$sanitizedUserName"
+        printf "  user_name         = \"%s\"\n" "$userName"
+        printf "  display_name      = \"%s\"\n" "$userDisplayName"
+        echo "  identity_store_id = local.sso_instance_id"
+        printf "  name {\n    given_name  = \"%s\"\n    family_name = \"%s\"\n  }\n" "$userGivenName" "$userFamilyName"
+
+        # Print optional user attributes
+        for attribute in "${!userOptionalAttributesRef[@]}"; do
+            value="${userOptionalAttributesRef[$attribute]}"
+            [[ $value != "null" ]] && printf "  %s = \"%s\"\n" "$attribute" "$value"
+        done
+
+        generate_user_nested_attributes "emails" userEmailAttributesRef
+        generate_user_nested_attributes "addresses" userAddressAttributesRef
+        generate_user_nested_attributes "phone_numbers" userPhoneAttributesRef
+
+        # Add lifecycle block to prevent destruction of users
+        echo "  lifecycle {"
+        echo "    prevent_destroy = true"
+        echo "  }"
+
+        echo "}"
+        echo ""
+
+    } >> "${files[users]}"
+}
+
+generate_user_data_block() {
+    local userName="$1"
+    local sanitizedUserName="$2"
+
+    printf '%s\n' \
+    "data \"aws_identitystore_user\" \"$sanitizedUserName\" {" \
+    "  identity_store_id = local.sso_instance_id" \
+    "  alternate_identifier {" \
+    "    unique_attribute {" \
+    "      attribute_path  = \"UserName\"" \
+    "      attribute_value = \"$userName\"" \
+    "    }" \
+    "  }" \
+    "}" \
+    "" >> "${files[users]}"
+}
+
+generate_user_import_block() {
+    local sanitizedUserName="$1"
+    local userId="$2"
+
+    printf '%s\n' \
+    "import {" \
+    "  to = aws_identitystore_user.$sanitizedUserName" \
+    "  id = \"$identityStoreId/$userId\"" \
+    "}" \
+    "" \
+    >> "${files[users_import]}"
+}
+
+generate_user_nested_attributes() {
+    local blockName="$1"
+    declare -n attrRef="$2"  # Changed the name to avoid conflict
+
+    if [[ ${attrRef["value"]} != "null" ]]; then
+        echo "  $blockName {" >> "${files[users]}"
+        for attribute in "${!attrRef[@]}"; do
+            value=${attrRef[$attribute]}
+            if [[ $value != "null" ]]; then
+                echo "    $attribute = \"$value\"" >> "${files[users]}"
+            fi
+        done
+        echo "  }" >> "${files[users]}"
+    fi
+}
+# -----------------------------------------------------------------------------
+
+
+
+# Group Helper Functions
+# -----------------------------------------------------------------------------
 fetch_all_groups() {
-    local identityStoreId="$1"
     local groupNextToken=""
     local groupResponses=""
 
@@ -192,262 +363,160 @@ fetch_all_groups() {
         [ -n "$groupNextToken" ] && groupResponseArgs+=("--next-token" "$groupNextToken")
         
         local groupResponse=$(aws identitystore list-groups "${groupResponseArgs[@]}")
-        groupResponses+=$(echo "$groupResponse" | jq -r '.Groups[]')
+        groupResponses+=$(jq -r '.Groups[]' <<< "$groupResponse")
         
-        groupNextToken=$(echo "$groupResponse" | jq -r '.NextToken')
+        groupNextToken=$(jq -r '.NextToken' <<< "$groupResponse")
         [ "$groupNextToken" == "null" ] && break
     done
 
     echo "$groupResponses"
 }
 
-# Process a list of users
-process_users_list() {
-    local usersList="$1"
-
-    local sortedUsers=$(echo "$usersList" | jq -s -c 'sort_by(.UserName)[]')
-    jq -r '@base64' <<< "$sortedUsers" | while read -r user_encoded; do
-        local user_decoded=$(echo "$user_encoded" | base64 --decode)
-        process_user "$user_decoded"
-    done
-}
-
-# Process a list of groups
 process_groups_list() {
     local groupsList="$1"
 
-    local sortedGroups=$(echo "$groupsList" | jq -s -c 'sort_by(.DisplayName)[]')
-    jq -r '@base64' <<< "$sortedGroups" | while read -r group_encoded; do
-        local group_decoded=$(echo "$group_encoded" | base64 --decode)
-        process_group "$group_decoded"
+    # Encode and then decode the JSON to address potential formatting issues
+    local encodedGroups=$(echo "$groupsList" | jq -s -c '.' | base64)
+    local decodedGroups=$(echo "$encodedGroups" | base64 --decode)
+
+    local sortedGroups=$(echo "$decodedGroups" | jq 'sort_by(.DisplayName)')
+    local totalGroups=$(echo "$sortedGroups" | jq 'length')
+    local processedGroups=0
+
+    # Display the total number of groups being processed
+    echo "Processing $totalGroups groups:"
+
+    # Initialize progress bar
+    echo -ne '[>-------------------] (0%)\r'
+
+    echo "$sortedGroups" | jq -c '.[]' | while read -r group; do
+        process_group "$group"
+
+        # Update progress bar
+        processedGroups=$((processedGroups + 1))
+        local progress=$((processedGroups * 100 / totalGroups))
+        local progressBar=$(printf '=%.0s' $(seq 1 $((progress / 5))))
+        echo -ne "[${progressBar:0:20}>] ($progress%)\r"
+    done
+
+    # End the progress bar with a newline and display completion message
+    echo -e "\nGroup processing complete."
+}
+
+generate_group_map_line() {
+    local sanitizedGroupDisplayName="$1"
+    local isSCIM="$2"
+    local prefix=""
+
+    [[ "$isSCIM" == "true" ]] && prefix="data."
+
+    printf '%s\n' \
+    "    \"$sanitizedGroupDisplayName\" = ${prefix}aws_identitystore_group.$sanitizedGroupDisplayName.group_id" \
+    >> "${files[groups_map]}"
+}
+
+generate_group_resource_block() {
+    local sanitizedGroupDisplayName="$1"
+    local groupDisplayName="$2"
+    local groupDescription="$3"
+    
+    printf '%s\n' \
+    "resource \"aws_identitystore_group\" \"$sanitizedGroupDisplayName\" {" \
+    "  display_name      = \"$groupDisplayName\"" >> "${files[groups]}"
+    
+    [ "$groupDescription" != "null" ] && printf '  description       = "%s"\n' "$groupDescription" >> "${files[groups]}"
+    
+    printf '%s\n' \
+    "  identity_store_id = local.sso_instance_id" \
+    "" \
+    "  lifecycle {" \
+    "    prevent_destroy = true" \
+    "  }" \
+    "}" \
+    "" >> "${files[groups]}"
+}
+
+generate_group_data_block() {
+    local sanitizedGroupDisplayName="$1"
+    local groupDisplayName="$2"
+    printf '%s\n' \
+    "data \"aws_identitystore_group\" \"$sanitizedGroupDisplayName\" {" \
+    "  identity_store_id = local.sso_instance_id" \
+    "  alternate_identifier {" \
+    "    unique_attribute {" \
+    "      attribute_path  = \"DisplayName\"" \
+    "      attribute_value = \"$groupDisplayName\"" \
+    "    }" \
+    "  }" \
+    "}" \
+    "" >> "${files[groups]}"
+}
+
+generate_group_import_block() {
+    local sanitizedGroupDisplayName="$1"
+    local groupId="$2"
+    printf '%s\n' \
+    "import {" \
+    "  to = aws_identitystore_group.$sanitizedGroupDisplayName" \
+    "  id = \"$identityStoreId/$groupId\"" \
+    "}" \
+    "" >> "${files[groups_import]}"
+}
+# -----------------------------------------------------------------------------
+
+
+
+# Group Membership Helper Functions
+# -----------------------------------------------------------------------------
+extract_group_membership_details() {
+    local membership="$1"
+    local membershipId=$(jq -r '.MembershipId' <<< "$membership")
+    local membershipUserId=$(jq -r '.MemberId.UserId' <<< "$membership")
+    echo "$membershipId $membershipUserId"
+}
+
+generate_group_membership_map_line() {
+    local membershipUserNames="$1"
+    local targetMembershipMapFile="$2"
+
+    for membershipUserName in $membershipUserNames; do
+        local sanitizedMembershipUserName=$(sanitize_for_terraform "$membershipUserName")
+        echo "      \"$sanitizedMembershipUserName\"," >> ${files[$targetMembershipMapFile]}
     done
 }
-# -----------------------------------------------------------------------------
 
-
-
-# Core Functions
-# -----------------------------------------------------------------------------
-# Process a user
-process_user() {
-    user_json="$1"
-
-    userId=$(jq -r '.UserId' <<< "$user_json")
-    userName=$(jq -r '.UserName' <<< "$user_json")
-    userDisplayName=$(jq -r '.DisplayName' <<< "$user_json")
-    userGivenName=$(jq -r '.Name.GivenName' <<< "$user_json")
-    userFamilyName=$(jq -r '.Name.FamilyName' <<< "$user_json")
-
-    isSCIM=$(echo "$user_json" | jq 'has("ExternalIds")')
-
-    # Sanitize the group name for Terraform block ID
-    sanitizedUserName=$(sanitize_for_terraform "$userName")
-    if $isSCIM; then
-        # Generate a data block for SCIM managed users
-        printf '%s\n' \
-        "data \"aws_identitystore_user\" \"$sanitizedUserName\" {" \
-        "  identity_store_id = local.sso_instance_id" \
-        "  alternate_identifier {" \
-        "    unique_attribute {" \
-        "      attribute_path  = \"UserName\"" \
-        "      attribute_value = \"$userName\"" \
-        "    }" \
-        "  }" \
-        "}" \
-        "" >> ${files[users]}
-
-        # Generate a mapping for SCIM managed users
-        printf '%s\n' \
-        "    \"$sanitizedUserName\" = data.aws_identitystore_user.$sanitizedUserName.user_id" >> ${files[users_map]}
-    else
-        # Generate a resource block for non-SCIM managed users
-        declare -A userAttributes=(
-            ["formatted"]=$(jq -r '.Name.Formatted' <<< "$user_json")
-            ["honorific_prefix"]=$(jq -r '.Name.HonorificPrefix' <<< "$user_json")
-            ["honorific_suffix"]=$(jq -r '.Name.HonorificSuffix' <<< "$user_json")
-            ["middle_name"]=$(jq -r '.Name.MiddleName' <<< "$user_json")
-            ["locale"]=$(jq -r '.Locale' <<< "$user_json")
-            ["nick_name"]=$(jq -r '.NickName' <<< "$user_json")
-            ["preferred_language"]=$(jq -r '.PreferredLanguage' <<< "$user_json")
-            ["profile_url"]=$(jq -r '.ProfileUrl' <<< "$user_json")
-            ["timezone"]=$(jq -r '.Timezone' <<< "$user_json")
-            ["title"]=$(jq -r '.Title' <<< "$user_json")
-            ["type"]=$(jq -r '.UserType' <<< "$user_json")
-        )
-
-        declare -A userEmailAttributes=(
-            ["value"]=$(jq -r '.Emails[0].Value' <<< "$user_json")
-            ["primary"]=$(jq -r '.Emails[0].Primary' <<< "$user_json")
-            ["type"]=$(jq -r '.Emails[0].Type' <<< "$user_json")
-        )
-
-        declare -A userAddressAttributes=(
-            ["value"]=$(jq -r '.Addresses[0].StreetAddress' <<< "$user_json")
-            ["country"]=$(jq -r '.Addresses[0].Country' <<< "$user_json")
-            ["formatted"]=$(jq -r '.Addresses[0].Formatted' <<< "$user_json")
-            ["locality"]=$(jq -r '.Addresses[0].Locality' <<< "$user_json")
-            ["postal_code"]=$(jq -r '.Addresses[0].PostalCode' <<< "$user_json")
-            ["primary"]=$(jq -r '.Addresses[0].Primary' <<< "$user_json")
-            ["region"]=$(jq -r '.Addresses[0].Region' <<< "$user_json")
-            ["street_address"]=$(jq -r '.Addresses[0].StreetAddress' <<< "$user_json")
-            ["type"]=$(jq -r '.Addresses[0].Type' <<< "$user_json")
-        )
-
-        declare -A userPhoneAttributes=(
-            ["value"]=$(jq -r '.PhoneNumbers[0].Value' <<< "$user_json")
-            ["primary"]=$(jq -r '.PhoneNumbers[0].Primary' <<< "$user_json")
-            ["type"]=$(jq -r '.PhoneNumbers[0].Type' <<< "$user_json")
-        )
-
-        printf '%s\n' \
-        "resource \"aws_identitystore_user\" \"$sanitizedUserName\" {" \
-        "  user_name         = \"$userName\"" \
-        "  display_name      = \"$userDisplayName\"" \
-        "  identity_store_id = local.sso_instance_id" \
-        "  name {" \
-        "    given_name  = \"$userGivenName\"" \
-        "    family_name = \"$userFamilyName\"" \
-        "  }" >> ${files[users]}
-
-        # Print user attributes
-        for attribute in "${!userAttributes[@]}"; do
-            value=${userAttributes[$attribute]}
-            if [[ $value != "null" ]]; then
-                echo "  $attribute = \"$value\"" >> ${files[users]}
-            fi
-        done
-
-        # Helper function to print block attributes
-        print_block_attributes() {
-            local blockName=$1
-            declare -n attributes=$2
-
-            if [[ ${attributes["value"]} != "null" ]]; then
-                echo "  $blockName {" >> ${files[users]}
-                for attribute in "${!attributes[@]}"; do
-                    value=${attributes[$attribute]}
-                    if [[ $value != "null" ]]; then
-                        echo "    $attribute = \"$value\"" >> ${files[users]}
-                    fi
-                done
-                echo "  }" >> ${files[users]}
-            fi
-        }
-
-        print_block_attributes "emails" userEmailAttributes
-        print_block_attributes "addresses" userAddressAttributes
-        print_block_attributes "phone_numbers" userPhoneAttributes
-
-        printf '%s\n' \
-        "}" \
-        "" >> ${files[users]}
-
-        # Generate a mapping for non-SCIM managed users
-        printf '%s\n' \
-        "    \"$sanitizedUserName\" = aws_identitystore_user.$sanitizedUserName.user_id" >> ${files[users_map]}
-
-        # Generate an import line for non-SCIM managed users
-        printf '%s\n' \
-        "import {" \
-        "  to = aws_identitystore_user.$sanitizedUserName" \
-        "  id = \"$identityStoreId/$userId\"" \
-        "}" \
-        "" \
-        >> ${files[users_import]}
-    fi
+generate_group_membership_import_block() {
+    local sanitizedGroupDisplayName="$1"
+    local membershipUserName="$2"
+    local membershipId="$3"
+    local sanitizedMembershipUserName=$(sanitize_for_terraform "$membershipUserName")
+    printf '%s\n' \
+    "import {" \
+    "  to = aws_identitystore_group_membership.controller[\"${sanitizedGroupDisplayName}___${sanitizedMembershipUserName}\"]" \
+    "  id = \"$identityStoreId/$membershipId\"" \
+    "}" \
+    "" \
+    >> ${files[group_memberships_import]}
 }
 
-# Fetch and process all users
-fetch_and_process_users() {
-    local identityStoreId="$1"
-    local allUsers=$(fetch_all_users "$identityStoreId")
-    process_users_list "$allUsers"
-}
-
-# Process a group
-process_group() {
-    group_json="$1"
+fetch_group_memberships() {
+    local groupId="$1"
+    local -n membershipsRef="$2"
     
-    groupId=$(echo "$group_json" | jq -r '.GroupId')
-    groupDisplayName=$(echo "$group_json" | jq -r '.DisplayName')
-    groupDescription=$(echo "$group_json" | jq -r '.Description')
-
-    isSCIM=$(echo "$group_json" | jq 'has("ExternalIds")')
-
-    # Sanitize the group name for Terraform block ID
-    sanitizedGroupDisplayName=$(sanitize_for_terraform "$groupDisplayName")
-    
-    if $isSCIM; then
-        # For SCIM managed groups
-
-        # Generate a data block
-        printf '%s\n' \
-        "data \"aws_identitystore_group\" \"$sanitizedGroupDisplayName\" {" \
-        "  identity_store_id = local.sso_instance_id" \
-        "  alternate_identifier {" \
-        "    unique_attribute {" \
-        "      attribute_path  = \"DisplayName\"" \
-        "      attribute_value = \"$groupDisplayName\"" \
-        "    }" \
-        "  }" \
-        "}" \
-        "" >> ${files[groups]}
-
-        # Generate a mapping
-        echo "    \"$sanitizedGroupDisplayName\" = data.aws_identitystore_group.$sanitizedGroupDisplayName.group_id" >> ${files[groups_map]}
-
-    else
-        # For non-SCIM managed groups
-
-        # Generate a resource block
-        printf '%s\n' \
-        "resource \"aws_identitystore_group\" \"$sanitizedGroupDisplayName\" {" \
-        "  display_name      = \"$groupDisplayName\"" >> ${files[groups]}
-
-        # Add description if it's not null
-        [ "$groupDescription" != "null" ] && printf '  description       = "%s"\n' "$groupDescription" >> ${files[groups]}
-
-        printf '%s\n' \
-        "  identity_store_id = local.sso_instance_id" \
-        "}" \
-        "" >> ${files[groups]}
-
-        # Generate a mapping
-        echo "    \"$sanitizedGroupDisplayName\" = aws_identitystore_group.$sanitizedGroupDisplayName.group_id" >> ${files[groups_map]}
-
-        # Generate an import block
-        printf '%s\n' \
-        "import {" \
-        "  to = aws_identitystore_group.$sanitizedGroupDisplayName" \
-        "  id = \"$identityStoreId/$groupId\"" \
-        "}" \
-        "" >> ${files[groups_import]}
-    fi
-
-
-    # Gather group membership information
-    
-    # Define a string to store all responses
-    declare -a memberships
-    membershipUsers=""
-    
-    # This loop fetches group memberships from the AWS Identity Store in a paginated manner.
-    # For each page of results, it extracts individual group memberships and appends them to the memberships array.
-
     # Initialize the token for pagination.
-    membershipNextToken=""
+    local membershipNextToken=""
 
     while true; do
         # If there's a next token, include it in the request arguments.
-        nextTokenArg=${membershipNextToken:+--next-token "$membershipNextToken"}
+        local nextTokenArg=${membershipNextToken:+--next-token "$membershipNextToken"}
 
         # Fetch the list of group memberships for the given group ID.
-        membershipResponse=$(aws identitystore list-group-memberships --identity-store-id "$identityStoreId" $nextTokenArg --group-id "$groupId" --output json)
+        local membershipResponse=$(aws identitystore list-group-memberships --identity-store-id "$identityStoreId" $nextTokenArg --group-id "$groupId" --output json)
         
         # Extract individual memberships from the response and add them to the memberships array.
         while IFS= read -r membership; do
-            memberships+=("$membership")
-        done < <(echo "$membershipResponse" | jq -c '.GroupMemberships[]')
+            membershipsRef+=("$membership")
+        done < <(jq -c '.GroupMemberships[]' <<< "$membershipResponse")
         
         # Extract the next token for pagination.
         membershipNextToken=$(jq -r '.NextToken' <<< "$membershipResponse")
@@ -457,73 +526,154 @@ process_group() {
             break
         fi
     done
+}
+
+fetch_group_membership_user() {
+    local membershipUserId="$1"
+    local membershipUser=$(aws identitystore describe-user --identity-store-id "$identityStoreId" --user-id "$membershipUserId" --output json)
+    echo "$membershipUser"
+}
+# -----------------------------------------------------------------------------
+
+
+
+# Core Functions
+# -----------------------------------------------------------------------------
+process_user() {
+    user_json="$1"
+
+    userId=$(jq -r '.UserId' <<< "$user_json")
+    userName=$(jq -r '.UserName' <<< "$user_json")
+    userDisplayName=$(jq -r '.DisplayName' <<< "$user_json")
+    userGivenName=$(jq -r '.Name.GivenName' <<< "$user_json")
+    userFamilyName=$(jq -r '.Name.FamilyName' <<< "$user_json")
+
+    # Sanitize the group name for Terraform block ID
+    sanitizedUserName=$(sanitize_for_terraform "$userName")
+
+    # Check if the user is SCIM managed
+    isSCIM=$(echo "$user_json" | jq 'has("ExternalIds")')
+
+    if $isSCIM; then
+        generate_user_data_block "$userName" "$sanitizedUserName"
+    else
+        # These are associative arrays that are passed
+        # by reference to the extract functions. Bash does
+        # not support returning these arrays from a function,
+        # so this is the workaround.
+        declare -A userOptionalAttributes
+        declare -A userEmailAttributes
+        declare -A userAddressAttributes
+        declare -A userPhoneAttributes
+
+        extract_user_optional_root_attributes "$user_json" userOptionalAttributes
+        extract_user_email_attributes "$user_json" userEmailAttributes
+        extract_user_address_attributes "$user_json" userAddressAttributes
+        extract_user_phone_attributes "$user_json" userPhoneAttributes
+
+        generate_user_resource_block \
+            "$userName" \
+            "$userDisplayName" \
+            "$userGivenName" \
+            "$userFamilyName" \
+            userOptionalAttributes \
+            userEmailAttributes \
+            userAddressAttributes \
+            userPhoneAttributes 
+
+        # Generate an import block for non-SCIM managed users
+        generate_user_import_block "$sanitizedUserName" "$userId"
+    fi
+
+    # Generate a mapping for users
+    generate_user_map_line "$sanitizedUserName" "$isSCIM"
+}
+
+process_group() {
+    local group_json="$1"
     
-    # Return early if there are no memberships
+    local groupId=$(jq -r '.GroupId' <<< "$group_json")
+    local groupDisplayName=$(jq -r '.DisplayName' <<< "$group_json")
+    local groupDescription=$(jq -r '.Description' <<< "$group_json")
+
+    # Sanitize the group name for Terraform block ID
+    local sanitizedGroupDisplayName=$(sanitize_for_terraform "$groupDisplayName")
+
+    # Check if the group is SCIM managed
+    local isSCIM=$(jq 'has("ExternalIds")' <<< "$group_json")
+    
+    # Generate Terraform blocks for the group
+    if $isSCIM; then
+        generate_group_data_block "$sanitizedGroupDisplayName" "$groupDisplayName"
+    else
+        generate_group_resource_block "$sanitizedGroupDisplayName" "$groupDisplayName" "$groupDescription"
+        generate_group_import_block "$sanitizedGroupDisplayName" "$groupId"
+    fi
+
+    generate_group_map_line "$sanitizedGroupDisplayName" "$isSCIM"
+
+
+
+    # Group memberships are processed as a nested
+    # function within group processing to minimize the
+    # number of API calls made to AWS.
+    declare -a memberships
+    fetch_group_memberships "$groupId" memberships
+    
+    # If there are no memberships, exit early
     [ -z "$memberships" ] && return
 
-    # This iterates over the list of group memberships, extracting relevant details
-    # such as membership ID and user ID. For each membership, it fetches the corresponding
-    # user details from the AWS Identity Store. The user details are save to an array to
-    # minimize redundant API calls. If the group is not managed by SCIM, 
-    # it sanitizes the user name and writes a Terraform import block for the group membership 
-    # to the appropriate output file.
+    # Process each membership's data
+    local membershipUsers=""
+    process_group_membership memberships "$sanitizedGroupDisplayName" membershipUsers "$isSCIM"
 
-    for membership in "${memberships[@]}"; do
-        membershipId=$(jq -r '.MembershipId' <<< "$membership")
-        membershipUserId=$(jq -r '.MemberId.UserId' <<< "$membership")
-
-        membershipUser=$(aws identitystore describe-user --identity-store-id $identityStoreId --user-id $membershipUserId --output json)
-        membershipUsers+=$membershipUser
-
-        if ! $isSCIM; then
-            # Sanitize the user name for Terraform block ID
-            membershipUserName=$(jq -r '.UserName' <<< "$membershipUser")
-            sanitizedMembershipUserName=$(sanitize_for_terraform "$membershipUserName")    
-            
-            # Write the group membership import block
-            printf '%s\n' \
-            "import {" \
-            "  to = aws_identitystore_group_membership.controller[\"${sanitizedGroupDisplayName}___${sanitizedMembershipUserName}\"]" \
-            "  id = \"$identityStoreId/$membershipId\"" \
-            "}" \
-            "" \
-            >> ${files[group_memberships_import]}
-        fi
-    done
-
-    # Alphabetize the membership users
-    membershipUsers=$(echo "$membershipUsers" | jq -s -c 'sort_by(.UserName)[]')
-    membershipUserNames=$(echo $membershipUsers | jq -r '.UserName')
-
-    # Determine target file based on SCIM status
-    targetMembershipMapFile=$($isSCIM && echo "group_memberships_map_scim" || echo "group_memberships_map")
-
-    # Generate a mapping for group memberships
+    # Sort membership users and generate membership mapping
+    local sortedMembershipUsers=$(echo "$membershipUsers" | jq -s -c 'sort_by(.UserName)[]')
+    local membershipUserNames=$(echo $sortedMembershipUsers | jq -r '.UserName')
+    local targetMembershipMapFile=$($isSCIM && echo "group_memberships_map_scim" || echo "group_memberships_map")
+    
     echo "    \"$sanitizedGroupDisplayName\" = [" >> ${files[$targetMembershipMapFile]}
-    for membershipUserName in $membershipUserNames; do
-        sanitizedMembershipUserName=$(sanitize_for_terraform "$membershipUserName")
-        echo "      \"$sanitizedMembershipUserName\"," >> ${files[$targetMembershipMapFile]}
-    done
-
-    # Close the group membership mapping
+    generate_group_membership_map_line "$membershipUserNames" "$targetMembershipMapFile"
     echo "    ]," >> "${files[$targetMembershipMapFile]}"
 }
 
-# Fetch and process all groups
+# Child process of process_group() to minimize API calls
+process_group_membership() {
+    local -n membershipsRef="$1"
+    local sanitizedGroupDisplayName="$2"
+    local -n membershipUsersRef="$3"
+    local isSCIM="$4"
+
+    for membership in "${membershipsRef[@]}"; do
+        read membershipId membershipUserId <<< $(extract_group_membership_details "$membership")
+        membershipUser=$(fetch_group_membership_user "$membershipUserId")
+        membershipUsersRef+=$membershipUser
+
+        if ! $isSCIM; then
+            local membershipUserName=$(jq -r '.UserName' <<< "$membershipUser")
+            generate_group_membership_import_block "$sanitizedGroupDisplayName" "$membershipUserName" "$membershipId"
+        fi
+    done
+}
+
+fetch_and_process_users() {
+    local allUsers=$(fetch_all_users)
+    process_users_list "$allUsers"
+}
+
 fetch_and_process_groups() {
-    local identityStoreId="$1"
-    local allGroups=$(fetch_all_groups "$identityStoreId")
+    local allGroups=$(fetch_all_groups)
     process_groups_list "$allGroups"
 }
 # -----------------------------------------------------------------------------
 
 
+
 # Main Function
 # -----------------------------------------------------------------------------
-check_aws_credentials
 write_initial_content
-fetch_and_process_users "$identityStoreId"
-fetch_and_process_groups "$identityStoreId"
+fetch_and_process_users
+fetch_and_process_groups
 write_closing_content
 
 echo "Done!"
