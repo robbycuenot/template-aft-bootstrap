@@ -33,6 +33,8 @@ declare -A files=(
     ["permission_sets"]="aws_ssoadmin_permission_sets.tf"
     ["permission_sets_map"]="aws_ssoadmin_permission_sets_map.tf"
     ["permission_sets_import"]="aws_ssoadmin_permission_sets_import.tf"
+    ["permission_set_inline_policies"]="aws_ssoadmin_permission_set_inline_policies.tf"
+    ["permission_set_inline_policies_import"]="aws_ssoadmin_permission_set_inline_policies_import.tf"
     ["users"]="aws_identitystore_users.tf"
     ["users_map"]="aws_identitystore_users_map.tf"
     ["users_import"]="aws_identitystore_users_import.tf"
@@ -574,6 +576,16 @@ fetch_all_permission_sets() {
     echo "$permissionSetResponses"
 }
 
+fetch_inline_policy_for_permission_set() {
+    local permissionSetArn="$1"
+    
+    # Fetch inline policy for the provided permission set ARN using AWS CLI.
+    local policyDocument=$(aws sso-admin get-inline-policy-for-permission-set --instance-arn $instanceArn --permission-set-arn "$permissionSetArn" | jq -r '.InlinePolicy')
+
+    # Return the inline policy document. If there's no inline policy, the output will be null or empty.
+    echo "$policyDocument"
+}
+
 process_permission_sets_list() {
     local permissionSetsList="$1"
     
@@ -629,7 +641,7 @@ generate_permission_set_resource_block() {
     local sessionDuration="$7"
 
     # Open the file for appending
-    exec 3>>aws_ssoadmin_permission_sets.tf
+    exec 3>>${files[permission_sets]}
 
     # Write the resource block to the file
     echo "resource \"aws_ssoadmin_permission_set\" \"$sanitizedName\" {" >&3
@@ -680,6 +692,59 @@ generate_permission_set_import_block() {
 
     # Close the file descriptor
     exec 3>&-
+}
+
+generate_inline_policy_resource_block() {
+    local sanitizedPermissionSetName="$1"
+    local sanitizedInlinePolicyName="$2"
+    local policyDocument="$3"
+
+    # Generate the policy document as a JSON file
+    generate_inline_policy_json_file "$sanitizedInlinePolicyName" "$policyDocument"
+
+    # Open the file in append mode using file descriptor 3
+    exec 3>>${files[permission_set_inline_policies]}
+
+    # Generate Terraform block that references the saved policy file and write it to the designated file
+    {
+        echo "resource \"aws_ssoadmin_permission_set_inline_policy\" \"${sanitizedInlinePolicyName}\" {"
+        echo "  instance_arn       = \"$instanceArn\""
+        echo "  permission_set_arn = aws_ssoadmin_permission_set.${sanitizedPermissionSetName}.arn"
+        echo "  inline_policy      = file(\"inline_policies/${sanitizedInlinePolicyName}.json\")"
+        echo "}"
+    } >&3  # Redirect the block to file descriptor 3
+
+    # Close file descriptor 3
+    exec 3>&-
+}
+
+generate_inline_policy_import_block() {
+    local sanitizedPermissionSetName="$1"
+    local sanitizedInlinePolicyName="$2"
+    local permissionSetArn="$3"
+
+    # Use the exec descriptor to append to the specific file
+    exec 3>>${files[permission_set_inline_policies_import]}
+
+    # Print the import block to the file using the file descriptor 3
+    {
+        echo "import {"
+        echo "  to = aws_ssoadmin_permission_set_inline_policy.${sanitizedInlinePolicyName}"
+        echo "  id = \"${permissionSetArn},${instanceArn}\""
+        echo "}"
+        echo ""
+    } >&3
+}
+
+generate_inline_policy_json_file() {
+    local sanitizedInlinePolicyName="$1"
+    local policyDocument="$2"
+
+    # Ensure the inline_policies directory exists
+    mkdir -p inline_policies
+
+    # Save the policy document to a JSON file
+    echo "$policyDocument" | jq '.' > "inline_policies/${sanitizedInlinePolicyName}.json"
 }
 # -----------------------------------------------------------------------------
 
@@ -825,6 +890,17 @@ process_permission_set() {
     generate_permission_set_resource_block "$sanitizedPermissionSetName" "$permissionSetArn" "$permissionSetName" "$permissionSetDescription" "$sortedTags" "$permissionSetRelayState" "$permissionSetSessionDuration"
     generate_permission_set_import_block "$sanitizedPermissionSetName" "$permissionSetArn"
     generate_permission_set_map_line "$sanitizedPermissionSetName"
+
+    # Process inline policies for the permission set
+    local policyDocument=$(fetch_inline_policy_for_permission_set "$permissionSetArn")
+    
+    if [ ! -z "$policyDocument" ]; then
+        local sanitizedInlinePolicyName="${sanitizedPermissionSetName}_inline_policy"
+
+        generate_inline_policy_resource_block "$sanitizedPermissionSetName" "$sanitizedInlinePolicyName" "$policyDocument"
+        generate_inline_policy_json_file "$sanitizedInlinePolicyName" "$policyDocument"
+        generate_inline_policy_import_block "$sanitizedPermissionSetName" "$sanitizedInlinePolicyName" "$permissionSetArn"
+    fi
 }
 
 fetch_and_process_users() {
