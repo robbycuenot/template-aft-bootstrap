@@ -15,6 +15,11 @@ identityStoreId=$(aws sso-admin list-instances --query 'Instances[0].IdentitySto
     exit 1
 }
 
+instanceArn=$(aws sso-admin list-instances --query 'Instances[0].InstanceArn' --output text) || {
+    echo "Error: Failed to retrieve the instanceArn. Please check your AWS credentials."
+    exit 1
+}
+
 declare -A files=(
     ["instances"]="aws_ssoadmin_instances.tf"
     ["groups"]="aws_identitystore_groups.tf"
@@ -25,13 +30,17 @@ declare -A files=(
     ["group_memberships_map_scim"]="aws_identitystore_group_memberships_map_scim.tf"
     ["group_memberships_flattened"]="aws_identitystore_group_memberships_flattened.tf"
     ["group_memberships_import"]="aws_identitystore_group_memberships_import.tf"
+    ["permission_sets"]="aws_ssoadmin_permission_sets.tf"
+    ["permission_sets_map"]="aws_ssoadmin_permission_sets_map.tf"
+    ["permission_sets_import"]="aws_ssoadmin_permission_sets_import.tf"
     ["users"]="aws_identitystore_users.tf"
     ["users_map"]="aws_identitystore_users_map.tf"
     ["users_import"]="aws_identitystore_users_import.tf"
 )
 
-# Make the identityStoreId and files array immutable
+# Make the identityStoreId, instanceArn and files array immutable
 readonly identityStoreId
+readonly instanceArn
 readonly -A files
 # -----------------------------------------------------------------------------
 
@@ -97,6 +106,9 @@ locals {
     write_content "${files[group_memberships_map_scim]}" 'locals {
   group_memberships_map_scim = {'
 
+    write_content "${files[permission_sets_map]}" 'locals {
+  permission_sets_map = {'
+
     write_content "${files[users_map]}" 'locals {
   users_map = {'
 
@@ -130,6 +142,11 @@ write_closing_content() {
     write_content "${files[groups_map]}" '
   }
 }'
+
+    write_content "${files[permission_sets_map]}" '
+  }
+}'
+
 
     write_content "${files[group_memberships_map]}" '
   }
@@ -537,6 +554,113 @@ fetch_group_membership_user() {
 
 
 
+# Permission Set Helper Functions
+# -----------------------------------------------------------------------------
+fetch_all_permission_sets() {
+    local permissionSetNextToken=""
+    local permissionSetResponses=""
+
+    while true; do
+        local permissionSetResponseArgs=("--instance-arn" "$instanceArn" "--output" "json")
+        [ -n "$permissionSetNextToken" ] && permissionSetResponseArgs+=("--next-token" "$permissionSetNextToken")
+        
+        local permissionSetResponse=$(aws sso-admin list-permission-sets "${permissionSetResponseArgs[@]}")
+        permissionSetResponses+=$(jq -r '.PermissionSets[]' <<< "$permissionSetResponse")
+        
+        permissionSetNextToken=$(jq -r '.NextToken' <<< "$permissionSetResponse")
+        [ "$permissionSetNextToken" == "null" ] && break
+    done
+
+    echo "$permissionSetResponses"
+}
+
+process_permission_sets_list() {
+    local permissionSetsList="$1"
+    
+    # Convert the space-separated string to an array
+    local -a permissionSetArray=($permissionSetsList)
+    local totalPermissionSets=${#permissionSetArray[@]}
+    local processedPermissionSets=0
+
+    # Display the total number of permission sets being processed
+    echo "Processing $totalPermissionSets permission sets:"
+
+    # Initialize progress bar
+    echo -ne '[>-------------------] (0%)\r'
+
+    # Fetch details for each permission set and store them in an associative array
+    declare -A permissionSetDetailsMap
+    for permissionSetArn in "${permissionSetArray[@]}"; do
+        permissionSetDetailsMap["$permissionSetArn"]=$(aws sso-admin describe-permission-set --instance-arn $instanceArn --permission-set-arn "$permissionSetArn")
+    done
+
+    # Sort permission sets by name
+    sortedPermissionSets=$(for arn in "${!permissionSetDetailsMap[@]}"; do
+        echo "$arn $(echo "${permissionSetDetailsMap[$arn]}" | jq -r '.PermissionSet.Name')"
+    done | sort -k2 | awk '{print $1}')
+
+    for permissionSetArn in $sortedPermissionSets; do
+        process_permission_set "$permissionSetArn" "${permissionSetDetailsMap[$permissionSetArn]}"
+        
+        # Update progress bar
+        processedPermissionSets=$((processedPermissionSets + 1))
+        local progress=$((processedPermissionSets * 100 / totalPermissionSets))
+        local progressBar=$(printf '=%.0s' $(seq 1 $((progress / 5))))
+        echo -ne "[${progressBar:0:20}>] ($progress%)\r"
+    done
+
+    # End the progress bar with a newline and display completion message
+    echo -e "\nPermission set processing complete."
+}
+
+generate_permission_set_resource_block() {
+    local sanitizedName="$1"
+    local arn="$2"
+    local name="$3"
+    local description="$4"
+    local tags="$5"
+    local relayState="$6"
+    local sessionDuration="$7"
+
+    # Open the file for appending
+    exec 3>>aws_ssoadmin_permission_sets.tf
+
+    # Write the resource block to the file
+    echo "resource \"aws_ssoadmin_permission_set\" \"$sanitizedName\" {" >&3
+    echo "  instance_arn = \"$instanceArn\"" >&3
+    echo "  name = \"$name\"" >&3
+    
+    # Conditionally add description if it exists and is not null
+    if [ -n "$description" ] && [ "$description" != "null" ]; then
+        echo "  description = \"$description\"" >&3
+    fi
+    
+    # Conditionally add relay_state and session_duration if they exist and are not null
+    if [ -n "$relayState" ] && [ "$relayState" != "null" ]; then
+        echo "  relay_state = \"$relayState\"" >&3
+    fi
+    if [ -n "$sessionDuration" ] && [ "$sessionDuration" != "null" ]; then
+        echo "  session_duration = \"$sessionDuration\"" >&3
+    fi
+
+    # Add tags if they exist
+    if [ -n "$tags" ]; then
+        echo "  tags = {" >&3
+        echo "$tags" | while IFS= read -r line; do
+            echo "    $line" >&3
+        done
+        echo "  }" >&3
+    fi
+    echo "}" >&3
+    echo "" >&3
+
+    # Close the file descriptor
+    exec 3>&-
+}
+# -----------------------------------------------------------------------------
+
+
+
 # Core Functions
 # -----------------------------------------------------------------------------
 process_user() {
@@ -656,14 +780,60 @@ process_group_membership() {
     done
 }
 
+process_permission_set() {
+    local permissionSetArn="$1"
+    local permissionSetDetails="$2"
+
+    local permissionSetTags=$(aws sso-admin list-tags-for-resource --instance-arn $instanceArn --resource-arn "$permissionSetArn")
+
+    # Extract relevant attributes from the permission set details
+    local permissionSetId=$(echo "$permissionSetDetails" | jq -r '.PermissionSet.PermissionSetId')
+    local permissionSetName=$(echo "$permissionSetDetails" | jq -r '.PermissionSet.Name')
+    local permissionSetDescription=$(echo "$permissionSetDetails" | jq -r '.PermissionSet.Description')
+    local permissionSetSessionDuration=$(echo "$permissionSetDetails" | jq -r '.PermissionSet.SessionDuration')
+    local permissionSetRelayState=$(echo "$permissionSetDetails" | jq -r '.PermissionSet.RelayState')
+
+    # Extract tags, sort them by key, and convert them to Terraform format
+    local sortedTags=$(echo "$permissionSetTags" | jq -r '.Tags | sort_by(.Key) | map("\(.Key) = \"\(.Value)\"") | join("\n")')
+    
+    # Sanitize the permission set name for Terraform block ID
+    local sanitizedPermissionSetName=$(sanitize_for_terraform "$permissionSetName")
+
+    # Generate the permission set resource block
+    generate_permission_set_resource_block "$sanitizedPermissionSetName" "$permissionSetArn" "$permissionSetName" "$permissionSetDescription" "$sortedTags" "$permissionSetRelayState" "$permissionSetSessionDuration"
+}
+
 fetch_and_process_users() {
     local allUsers=$(fetch_all_users)
+
+    if [ -z "$allUsers" ]; then
+        echo "No users found."
+        return
+    fi
+
     process_users_list "$allUsers"
 }
 
 fetch_and_process_groups() {
     local allGroups=$(fetch_all_groups)
+
+    if [ -z "$allGroups" ]; then
+        echo "No groups found."
+        return
+    fi
+
     process_groups_list "$allGroups"
+}
+
+fetch_and_process_permission_sets() {
+    local allPermissionSets=$(fetch_all_permission_sets)
+
+    if [ -z "$allPermissionSets" ]; then
+        echo "No permission sets found."
+        return
+    fi
+
+    process_permission_sets_list "$allPermissionSets"
 }
 # -----------------------------------------------------------------------------
 
@@ -674,6 +844,7 @@ fetch_and_process_groups() {
 write_initial_content
 fetch_and_process_users
 fetch_and_process_groups
+fetch_and_process_permission_sets
 write_closing_content
 
 echo "Done!"
