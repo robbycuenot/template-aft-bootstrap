@@ -35,6 +35,11 @@ declare -A files=(
     ["permission_sets_import"]="aws_ssoadmin_permission_sets_import.tf"
     ["permission_set_inline_policies"]="aws_ssoadmin_permission_set_inline_policies.tf"
     ["permission_set_inline_policies_import"]="aws_ssoadmin_permission_set_inline_policies_import.tf"
+    ["permission_set_managed_policy_attachments"]="aws_ssoadmin_permission_set_managed_policy_attachments.tf"
+    ["permission_set_managed_policy_attachments_import"]="aws_ssoadmin_permission_set_managed_policy_attachments_import.tf"
+    ["managed_policies"]="aws_iam_managed_policies.tf"
+    ["managed_policies_list"]="aws_iam_managed_policies_list.tf"
+    ["managed_policies_map"]="aws_iam_managed_policies_map.tf"
     ["users"]="aws_identitystore_users.tf"
     ["users_map"]="aws_identitystore_users_map.tf"
     ["users_import"]="aws_identitystore_users_import.tf"
@@ -133,6 +138,18 @@ locals {
     ]
   ])
 }'
+
+    write_content "${files[managed_policies]}" 'data "aws_iam_policy" "managed_policies" {
+  count = length(local.managed_policies_list)
+  
+  name = local.managed_policies_list[count.index]
+}'
+
+    write_content "${files[managed_policies_list]}" 'locals {
+  managed_policies_list = ['
+
+    write_content "${files[managed_policies_map]}" 'locals {
+  managed_policies_map = {'
 }
 
 write_closing_content() {
@@ -140,7 +157,6 @@ write_closing_content() {
   }
 }'
 
-    # Finish the Terraform group map file
     write_content "${files[groups_map]}" '
   }
 }'
@@ -155,6 +171,14 @@ write_closing_content() {
 }'
 
     write_content "${files[group_memberships_map_scim]}" '
+  }
+}'
+
+    write_content "${files[managed_policies_list]}" '
+  ]
+}'
+
+    write_content "${files[managed_policies_map]}" '
   }
 }'
 }
@@ -746,6 +770,64 @@ generate_inline_policy_json_file() {
     # Save the policy document to a JSON file
     echo "$policyDocument" | jq '.' > "inline_policies/${sanitizedInlinePolicyName}.json"
 }
+
+generate_managed_policy_attachment_resource_block() {
+    local sanitizedManagedPolicyName="$1"
+    local sanitizedPermissionSetName="$2"
+    local managedPolicyArn="$3"
+
+    # Generate a unique name for the Terraform resource block
+    local resourceBlockName="${sanitizedPermissionSetName}_${sanitizedManagedPolicyName}_attachment"
+
+    # Use the exec descriptor to append to the specific file
+    exec 3>>${files[permission_set_managed_policy_attachments]}
+
+    # Generate Terraform block that attaches the managed policy and write it to a designated file
+    {
+        echo "resource \"aws_ssoadmin_managed_policy_attachment\" \"$resourceBlockName\" {"
+        echo "  instance_arn           = \"$instanceArn\""
+        echo "  managed_policy_arn     = \"$managedPolicyArn\""
+        echo "  permission_set_arn     = aws_ssoadmin_permission_set.${sanitizedPermissionSetName}.arn"
+        echo "}"
+    } >&3
+}
+# -----------------------------------------------------------------------------
+
+
+
+# Managed Policy Helper Functions
+# -----------------------------------------------------------------------------
+fetch_all_managed_policies() {
+    local managedPoliciesNextToken=""
+    local managedPoliciesResponses=""
+
+    while true; do
+        local managedPoliciesResponseArgs=("--scope" "AWS" "--output" "json")
+        [ -n "$managedPoliciesNextToken" ] && managedPoliciesResponseArgs+=("--starting-token" "$managedPoliciesNextToken")
+        
+        local managedPoliciesResponse=$(aws iam list-policies "${managedPoliciesResponseArgs[@]}")
+        managedPoliciesResponses+=$(jq -r '.Policies[]' <<< "$managedPoliciesResponse")
+        
+        managedPoliciesNextToken=$(jq -r '.NextToken' <<< "$managedPoliciesResponse")
+        [ "$managedPoliciesNextToken" == "null" ] && break
+    done
+
+    echo "$managedPoliciesResponses"
+}
+
+process_managed_policies_list() {
+    local managedPoliciesJson="$1"
+
+    # Extract policy names from the JSON and sort them alphabetically
+    local sortedManagedPoliciesJson=$(echo "$managedPoliciesJson" | jq -s 'sort_by(.PolicyName)')
+
+    # Write the sorted policy names to the managed_policies_list file with formatting
+    local sortedManagedPoliciesNames=$(echo "$sortedManagedPoliciesJson" | jq -r '.[].PolicyName')
+    for policyName in $sortedManagedPoliciesNames; do
+        echo "    \"$policyName\"," >> ${files[managed_policies_list]}
+        echo "    \"$policyName\" = data.aws_iam_policy.managed_policies[\"$policyName\"].arn," >> ${files[managed_policies_map]}
+    done
+}
 # -----------------------------------------------------------------------------
 
 
@@ -891,7 +973,7 @@ process_permission_set() {
     generate_permission_set_import_block "$sanitizedPermissionSetName" "$permissionSetArn"
     generate_permission_set_map_line "$sanitizedPermissionSetName"
 
-    # Process inline policies for the permission set
+    # Process the inline policy for the permission set if it exists
     local policyDocument=$(fetch_inline_policy_for_permission_set "$permissionSetArn")
     
     if [ ! -z "$policyDocument" ]; then
@@ -901,6 +983,24 @@ process_permission_set() {
         generate_inline_policy_json_file "$sanitizedInlinePolicyName" "$policyDocument"
         generate_inline_policy_import_block "$sanitizedPermissionSetName" "$sanitizedInlinePolicyName" "$permissionSetArn"
     fi
+
+    # Fetch and process managed policies for the permission set
+    local managedPoliciesResponse=$(aws sso-admin list-managed-policies-in-permission-set --instance-arn $instanceArn --permission-set-arn "$permissionSetArn")
+    declare -A managedPolicies
+
+    # Populate the associative array
+    while read -r policyRecord; do
+        policyName=$(echo "$policyRecord" | jq -r '.Name')
+        policyArn=$(echo "$policyRecord" | jq -r '.Arn')
+        managedPolicies["$policyName"]="$policyArn"
+    done < <(echo "$managedPoliciesResponse" | jq -c '.AttachedManagedPolicies[]')
+
+    # Loop through the associative array
+    for policyName in "${!managedPolicies[@]}"; do
+        sanitizedManagedPolicyName=$(sanitize_for_terraform "$policyName")
+        policyArn="${managedPolicies[$policyName]}"
+        generate_managed_policy_attachment_resource_block "$sanitizedManagedPolicyName" "$sanitizedPermissionSetName" "$policyArn"
+    done
 }
 
 fetch_and_process_users() {
@@ -935,6 +1035,17 @@ fetch_and_process_permission_sets() {
 
     process_permission_sets_list "$allPermissionSets"
 }
+
+fetch_and_process_managed_policies() {
+    local allManagedPolicies=$(fetch_all_managed_policies)
+
+    if [ -z "$allManagedPolicies" ]; then
+        echo "No managed policies found."
+        return
+    fi
+
+    process_managed_policies_list "$allManagedPolicies"
+}
 # -----------------------------------------------------------------------------
 
 
@@ -945,6 +1056,7 @@ write_initial_content
 fetch_and_process_users
 fetch_and_process_groups
 fetch_and_process_permission_sets
+fetch_and_process_managed_policies
 write_closing_content
 
 echo "Done!"
