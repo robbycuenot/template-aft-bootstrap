@@ -613,6 +613,12 @@ process_permission_sets_list() {
     echo -e "\nPermission set processing complete."
 }
 
+generate_permission_set_map_line() {
+    local sanitizedPermissionSetName="$1"
+
+    echo "    \"$sanitizedPermissionSetName\" = aws_ssoadmin_permission_set.$sanitizedPermissionSetName.arn," >> "${files[permission_sets_map]}"
+}
+
 generate_permission_set_resource_block() {
     local sanitizedName="$1"
     local arn="$2"
@@ -653,6 +659,24 @@ generate_permission_set_resource_block() {
     fi
     echo "}" >&3
     echo "" >&3
+
+    # Close the file descriptor
+    exec 3>&-
+}
+
+generate_permission_set_import_block() {
+    local sanitizedPermissionSetName="$1"
+    local permissionSetArn="$2"
+
+    # Open the file for appending and use file descriptor 3
+    exec 3>>${files[permission_sets_import]}
+
+    # Write the import block to the file using the file descriptor
+    echo "import {" >&3
+    echo "  to = aws_ssoadmin_permission_set.$sanitizedPermissionSetName" >&3
+    echo "  id = \"$permissionSetArn,$instanceArn\"" >&3
+    echo "}" >&3
+    echo "" >&3  # Add a newline for separation
 
     # Close the file descriptor
     exec 3>&-
@@ -796,11 +820,11 @@ process_permission_set() {
     # Extract tags, sort them by key, and convert them to Terraform format
     local sortedTags=$(echo "$permissionSetTags" | jq -r '.Tags | sort_by(.Key) | map("\(.Key) = \"\(.Value)\"") | join("\n")')
     
-    # Sanitize the permission set name for Terraform block ID
     local sanitizedPermissionSetName=$(sanitize_for_terraform "$permissionSetName")
 
-    # Generate the permission set resource block
     generate_permission_set_resource_block "$sanitizedPermissionSetName" "$permissionSetArn" "$permissionSetName" "$permissionSetDescription" "$sortedTags" "$permissionSetRelayState" "$permissionSetSessionDuration"
+    generate_permission_set_import_block "$sanitizedPermissionSetName" "$permissionSetArn"
+    generate_permission_set_map_line "$sanitizedPermissionSetName"
 }
 
 fetch_and_process_users() {
