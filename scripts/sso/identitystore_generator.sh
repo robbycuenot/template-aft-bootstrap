@@ -37,6 +37,8 @@ declare -A files=(
     ["permission_set_inline_policies_import"]="aws_ssoadmin_permission_set_inline_policies_import.tf"
     ["permission_set_managed_policy_attachments"]="aws_ssoadmin_permission_set_managed_policy_attachments.tf"
     ["permission_set_managed_policy_attachments_import"]="aws_ssoadmin_permission_set_managed_policy_attachments_import.tf"
+    ["permission_set_managed_policy_attachments_map"]="aws_ssoadmin_permission_set_managed_policy_attachments_map.tf"
+    ["permission_set_managed_policy_attachments_flattened"]="aws_ssoadmin_permission_set_managed_policy_attachments_flattened.tf"    
     ["managed_policies"]="aws_iam_managed_policies.tf"
     ["managed_policies_list"]="aws_iam_managed_policies_list.tf"
     ["managed_policies_map"]="aws_iam_managed_policies_map.tf"
@@ -101,7 +103,8 @@ write_initial_content() {
     write_content "${files[instances]}" 'data "aws_ssoadmin_instances" "instances" {}
 
 locals {
-    sso_instance_id = tolist(data.aws_ssoadmin_instances.instances.identity_store_ids)[0]
+    sso_instance_identity_store_id = tolist(data.aws_ssoadmin_instances.instances.identity_store_ids)[0],
+    sso_instance_arn = tolist(data.aws_ssoadmin_instances.instances.arns)[0]
 }'
 
     write_content "${files[groups_map]}" 'locals {
@@ -125,7 +128,18 @@ locals {
   group_id = local.groups_map[each.value.group]
   member_id  = local.users_map[each.value.user]
 
-  identity_store_id = local.sso_instance_id
+  identity_store_id = local.sso_instance_identity_store_id
+}'
+
+    write_content "${files[permission_set_managed_policy_attachments]}" 'resource "aws_ssoadmin_permission_set_managed_policy_attachment" "controller" {
+  for_each = { 
+    for attachment in local.permission_set_managed_policy_attachments_flattened : 
+    "${attachment.permission_set}___${attachment.managed_policy}" => attachment 
+  }
+
+  instance_arn         = local.sso_instance_arn
+  managed_policy_arn   = local.managed_policies_map[each.value.managed_policy]
+  permission_set_arn   = local.permission_sets_map[each.value.permission_set]
 }'
 
     write_content "${files[group_memberships_flattened]}" 'locals {
@@ -138,6 +152,20 @@ locals {
     ]
   ])
 }'
+
+    write_content "${files[permission_set_managed_policy_attachments_flattened]}" 'locals {
+  permission_set_managed_policy_attachments_flattened = flatten([
+    for permission_set, managed_policies in local.permission_set_managed_policy_attachments_map : [
+      for managed_policy in managed_policies : {
+        "permission_set" = permission_set,
+        "managed_policy"  = managed_policy
+      }
+    ]
+  ])
+}'
+
+    write_content "${files[permission_set_managed_policy_attachments_map]}" 'locals {
+  permission_set_managed_policy_attachments_map = {'
 
     write_content "${files[managed_policies]}" 'data "aws_iam_policy" "managed_policies" {
   count = length(local.managed_policies_list)
@@ -153,33 +181,28 @@ locals {
 }
 
 write_closing_content() {
-    write_content "${files[users_map]}" '
-  }
+    write_content "${files[users_map]}" '  }
 }'
 
-    write_content "${files[groups_map]}" '
-  }
+    write_content "${files[groups_map]}" '  }
 }'
 
-    write_content "${files[permission_sets_map]}" '
-  }
+    write_content "${files[permission_sets_map]}" '  }
 }'
 
-
-    write_content "${files[group_memberships_map]}" '
-  }
+    write_content "${files[permission_set_managed_policy_attachments_map]}" '  }
 }'
 
-    write_content "${files[group_memberships_map_scim]}" '
-  }
+    write_content "${files[group_memberships_map]}" '  }
 }'
 
-    write_content "${files[managed_policies_list]}" '
-  ]
+    write_content "${files[group_memberships_map_scim]}" '  }
 }'
 
-    write_content "${files[managed_policies_map]}" '
-  }
+    write_content "${files[managed_policies_list]}" '  ]
+}'
+
+    write_content "${files[managed_policies_map]}" '  }
 }'
 }
 # -----------------------------------------------------------------------------
@@ -322,7 +345,7 @@ generate_user_resource_block() {
         printf "resource \"aws_identitystore_user\" \"%s\" {\n" "$sanitizedUserName"
         printf "  user_name         = \"%s\"\n" "$userName"
         printf "  display_name      = \"%s\"\n" "$userDisplayName"
-        echo "  identity_store_id = local.sso_instance_id"
+        echo "  identity_store_id = local.sso_instance_identity_store_id"
         printf "  name {\n    given_name  = \"%s\"\n    family_name = \"%s\"\n  }\n" "$userGivenName" "$userFamilyName"
 
         # Print optional user attributes
@@ -352,7 +375,7 @@ generate_user_data_block() {
 
     printf '%s\n' \
     "data \"aws_identitystore_user\" \"$sanitizedUserName\" {" \
-    "  identity_store_id = local.sso_instance_id" \
+    "  identity_store_id = local.sso_instance_identity_store_id" \
     "  alternate_identifier {" \
     "    unique_attribute {" \
     "      attribute_path  = \"UserName\"" \
@@ -470,7 +493,7 @@ generate_group_resource_block() {
     [ "$groupDescription" != "null" ] && printf '  description       = "%s"\n' "$groupDescription" >> "${files[groups]}"
     
     printf '%s\n' \
-    "  identity_store_id = local.sso_instance_id" \
+    "  identity_store_id = local.sso_instance_identity_store_id" \
     "" \
     "  lifecycle {" \
     "    prevent_destroy = true" \
@@ -484,7 +507,7 @@ generate_group_data_block() {
     local groupDisplayName="$2"
     printf '%s\n' \
     "data \"aws_identitystore_group\" \"$sanitizedGroupDisplayName\" {" \
-    "  identity_store_id = local.sso_instance_id" \
+    "  identity_store_id = local.sso_instance_identity_store_id" \
     "  alternate_identifier {" \
     "    unique_attribute {" \
     "      attribute_path  = \"DisplayName\"" \
@@ -771,25 +794,40 @@ generate_inline_policy_json_file() {
     echo "$policyDocument" | jq '.' > "inline_policies/${sanitizedInlinePolicyName}.json"
 }
 
-generate_managed_policy_attachment_resource_block() {
-    local sanitizedManagedPolicyName="$1"
-    local sanitizedPermissionSetName="$2"
-    local managedPolicyArn="$3"
+generate_permission_set_managed_policy_attachment_map_line() {
+    local sanitizedPermissionSetName="$1"
+    local sanitizedManagedPolicyName="$2"
 
-    # Generate a unique name for the Terraform resource block
-    local resourceBlockName="${sanitizedPermissionSetName}_${sanitizedManagedPolicyName}_attachment"
+    # Append the map entry to the designated file
+    exec 3>>${files[permission_set_managed_policy_attachments_map]}
 
-    # Use the exec descriptor to append to the specific file
-    exec 3>>${files[permission_set_managed_policy_attachments]}
+    # Check if the permission set is already in the map
+    # If it's not, start a new array for the permission set
+    grep -q "\"$sanitizedPermissionSetName\" =" ${files[permission_set_managed_policy_attachments_map]} || {
+        echo "    \"$sanitizedPermissionSetName\" = [" >&3
+    }
 
-    # Generate Terraform block that attaches the managed policy and write it to a designated file
-    {
-        echo "resource \"aws_ssoadmin_managed_policy_attachment\" \"$resourceBlockName\" {"
-        echo "  instance_arn           = \"$instanceArn\""
-        echo "  managed_policy_arn     = \"$managedPolicyArn\""
-        echo "  permission_set_arn     = aws_ssoadmin_permission_set.${sanitizedPermissionSetName}.arn"
-        echo "}"
-    } >&3
+    # Append the managed policy to the permission set's array
+    echo "      \"$sanitizedManagedPolicyName\"," >&3
+}
+
+generate_permission_set_managed_policy_attachment_import_block() {
+    local sanitizedPermissionSetName="$1"
+    local sanitizedManagedPolicyName="$2"
+    local permissionSetArn="$3"
+    local managedPolicyArn="$4"
+    
+    # Formulate the Terraform resource address:
+    local terraformResourceAddress="aws_ssoadmin_permission_set_managed_policy_attachment.controller[\"${sanitizedPermissionSetName}___${sanitizedManagedPolicyName}\"]"
+    
+    # Construct the import block:
+    local importBlock="import {
+  to = ${terraformResourceAddress}
+  id = \"${managedPolicyArn},${permissionSetArn},${instanceArn}\"
+}"
+    
+    # Append the generated import block to an imports file:
+    echo "$importBlock" >> "${files[permission_set_managed_policy_attachments_import]}"
 }
 # -----------------------------------------------------------------------------
 
@@ -988,19 +1026,26 @@ process_permission_set() {
     local managedPoliciesResponse=$(aws sso-admin list-managed-policies-in-permission-set --instance-arn $instanceArn --permission-set-arn "$permissionSetArn")
     declare -A managedPolicies
 
-    # Populate the associative array
+    # Populate the associative array with policy names as keys and ARNs as values
     while read -r policyRecord; do
         policyName=$(echo "$policyRecord" | jq -r '.Name')
         policyArn=$(echo "$policyRecord" | jq -r '.Arn')
         managedPolicies["$policyName"]="$policyArn"
     done < <(echo "$managedPoliciesResponse" | jq -c '.AttachedManagedPolicies[]')
 
-    # Loop through the associative array
-    for policyName in "${!managedPolicies[@]}"; do
+    # Sort the policy names
+    sortedPolicyNames=($(printf "%s\n" "${!managedPolicies[@]}" | sort))
+
+    # Loop through the sorted array of policy names
+    for policyName in "${sortedPolicyNames[@]}"; do
         sanitizedManagedPolicyName=$(sanitize_for_terraform "$policyName")
-        policyArn="${managedPolicies[$policyName]}"
-        generate_managed_policy_attachment_resource_block "$sanitizedManagedPolicyName" "$sanitizedPermissionSetName" "$policyArn"
+        policyArn=${managedPolicies["$policyName"]}
+        generate_permission_set_managed_policy_attachment_map_line "$sanitizedPermissionSetName" "$sanitizedManagedPolicyName"
+        generate_permission_set_managed_policy_attachment_import_block "$sanitizedPermissionSetName" "$sanitizedManagedPolicyName" "$permissionSetArn" "$policyArn"
     done
+
+    # Add a closing bracket to the managed policy attachments map file
+    echo "    ]," >> "${files[permission_set_managed_policy_attachments_map]}"
 }
 
 fetch_and_process_users() {
