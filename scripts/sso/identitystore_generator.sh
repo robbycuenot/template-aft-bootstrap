@@ -20,6 +20,13 @@ instanceArn=$(aws sso-admin list-instances --query 'Instances[0].InstanceArn' --
     exit 1
 }
 
+declare -A accountMap
+while IFS= read -r line; do
+    accountId=$(echo "$line" | cut -f1)
+    accountName=$(echo "$line" | cut -f2)
+    accountMap["$accountId"]="$accountName"
+done < <(aws organizations list-accounts --query 'Accounts[].[Id, Name]' --output text)
+
 declare -A files=(
     ["instances"]="aws_ssoadmin_instances.tf"
     ["groups"]="aws_identitystore_groups.tf"
@@ -47,9 +54,14 @@ declare -A files=(
     ["users_import"]="aws_identitystore_users_import.tf"
 )
 
-# Make the identityStoreId, instanceArn and files array immutable
+declare -A usersMap
+
+declare -A groupsMap
+
+# Make the identityStoreId, instanceArn, accountMap and files immutable
 readonly identityStoreId
 readonly instanceArn
+readonly -A accountMap
 readonly -A files
 # -----------------------------------------------------------------------------
 
@@ -304,7 +316,7 @@ process_users_list() {
     # Initialize progress bar
     echo -ne '[>-------------------] (0%)\r'
 
-    jq -r '.[] | @base64' <<< "$sortedUsers" | while read -r user_encoded; do
+    while read -r user_encoded; do
         local user_decoded=$(echo "$user_encoded" | base64 --decode)
         process_user "$user_decoded"
 
@@ -313,7 +325,7 @@ process_users_list() {
         local progress=$((processedUsers * 100 / totalUsers))
         local progressBar=$(printf '=%.0s' $(seq 1 $((progress / 5))))
         echo -ne "[${progressBar:0:20}>] ($progress%)\r"
-    done
+    done < <(jq -r '.[] | @base64' <<< "$sortedUsers")
 
     # End the progress bar with a newline and display completion message
     echo -e "\nUser processing complete."
@@ -455,7 +467,7 @@ process_groups_list() {
     # Initialize progress bar
     echo -ne '[>-------------------] (0%)\r'
 
-    echo "$sortedGroups" | jq -c '.[]' | while read -r group; do
+    while read -r group; do
         process_group "$group"
 
         # Update progress bar
@@ -463,7 +475,7 @@ process_groups_list() {
         local progress=$((processedGroups * 100 / totalGroups))
         local progressBar=$(printf '=%.0s' $(seq 1 $((progress / 5))))
         echo -ne "[${progressBar:0:20}>] ($progress%)\r"
-    done
+    done < <(echo "$sortedGroups" | jq -c '.[]')
 
     # End the progress bar with a newline and display completion message
     echo -e "\nGroup processing complete."
@@ -741,13 +753,9 @@ generate_permission_set_import_block() {
     exec 3>&-
 }
 
-generate_inline_policy_resource_block() {
+generate_permission_set_inline_policy_resource_block() {
     local sanitizedPermissionSetName="$1"
     local sanitizedInlinePolicyName="$2"
-    local policyDocument="$3"
-
-    # Generate the policy document as a JSON file
-    generate_inline_policy_json_file "$sanitizedInlinePolicyName" "$policyDocument"
 
     # Open the file in append mode using file descriptor 3
     exec 3>>${files[permission_set_inline_policies]}
@@ -765,7 +773,7 @@ generate_inline_policy_resource_block() {
     exec 3>&-
 }
 
-generate_inline_policy_import_block() {
+generate_permission_set_inline_policy_import_block() {
     local sanitizedPermissionSetName="$1"
     local sanitizedInlinePolicyName="$2"
     local permissionSetArn="$3"
@@ -783,7 +791,7 @@ generate_inline_policy_import_block() {
     } >&3
 }
 
-generate_inline_policy_json_file() {
+generate_permission_set_inline_policy_json_file() {
     local sanitizedInlinePolicyName="$1"
     local policyDocument="$2"
 
@@ -884,6 +892,9 @@ process_user() {
     # Sanitize the group name for Terraform block ID
     sanitizedUserName=$(sanitize_for_terraform "$userName")
 
+    # Update the global associative array of users
+    usersMap["$userId"]="$sanitizedUserName"
+
     # Check if the user is SCIM managed
     isSCIM=$(echo "$user_json" | jq 'has("ExternalIds")')
 
@@ -931,6 +942,9 @@ process_group() {
 
     # Sanitize the group name for Terraform block ID
     local sanitizedGroupDisplayName=$(sanitize_for_terraform "$groupDisplayName")
+
+    # Update the global associative array of groups
+    groupsMap["$groupId"]="$sanitizedGroupDisplayName"
 
     # Check if the group is SCIM managed
     local isSCIM=$(jq 'has("ExternalIds")' <<< "$group_json")
@@ -1017,9 +1031,9 @@ process_permission_set() {
     if [ ! -z "$policyDocument" ]; then
         local sanitizedInlinePolicyName="${sanitizedPermissionSetName}_inline_policy"
 
-        generate_inline_policy_resource_block "$sanitizedPermissionSetName" "$sanitizedInlinePolicyName" "$policyDocument"
-        generate_inline_policy_json_file "$sanitizedInlinePolicyName" "$policyDocument"
-        generate_inline_policy_import_block "$sanitizedPermissionSetName" "$sanitizedInlinePolicyName" "$permissionSetArn"
+        generate_permission_set_inline_policy_resource_block "$sanitizedPermissionSetName" "$sanitizedInlinePolicyName" "$policyDocument"
+        generate_permission_set_inline_policy_json_file "$sanitizedInlinePolicyName" "$policyDocument"
+        generate_permission_set_inline_policy_import_block "$sanitizedPermissionSetName" "$sanitizedInlinePolicyName" "$permissionSetArn"
     fi
 
     # Fetch and process managed policies for the permission set
@@ -1046,6 +1060,36 @@ process_permission_set() {
 
     # Add a closing bracket to the managed policy attachments map file
     echo "    ]," >> "${files[permission_set_managed_policy_attachments_map]}"
+
+    echo "Fetching accounts for provisioned permission set: $permissionSetArn"
+
+    # Get a list of account IDs for the given permission set
+    local accountsResponse=$(aws sso-admin list-accounts-for-provisioned-permission-set --instance-arn "$instanceArn" --permission-set-arn "$permissionSetArn" | jq -r '.AccountIds[]')
+    declare -a accountIds=($accountsResponse)
+
+    if [ "${#accountIds[@]}" -eq 0 ]; then
+        return
+    fi
+
+    # Loop through each account ID and get users and groups assigned to the permission set
+    for accountId in "${accountIds[@]}"; do
+        echo "Processing account ID: $accountId, Account Name: ${accountMap[$accountId]}"
+
+        # Get the list of users and groups assigned to the permission set in this account
+        assignmentsResponse=$(aws sso-admin list-account-assignments --instance-arn "$instanceArn" --account-id "$accountId" --permission-set-arn "$permissionSetArn")
+
+        # Parse out the principal type (user/group) and principal IDs
+        principalNames=$(echo "$assignmentsResponse" | jq -r '.AccountAssignments[] | "\(.PrincipalType): \(.PrincipalId)"')
+
+        # Debug - Display the principal type and IDs
+        echo "$principalNames"
+
+        # You can further process the principalNames or filter out users/groups as required.
+
+        # Debug
+        # echo "Finished processing account: $accountId"
+    done
+
 }
 
 fetch_and_process_users() {
@@ -1099,7 +1143,9 @@ fetch_and_process_managed_policies() {
 # -----------------------------------------------------------------------------
 write_initial_content
 fetch_and_process_users
+readonly -A usersMap
 fetch_and_process_groups
+readonly -A groupsMap
 fetch_and_process_permission_sets
 fetch_and_process_managed_policies
 write_closing_content
