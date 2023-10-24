@@ -46,6 +46,10 @@ declare -A files=(
     ["permission_set_managed_policy_attachments_import"]="aws_ssoadmin_permission_set_managed_policy_attachments_import.tf"
     ["permission_set_managed_policy_attachments_map"]="aws_ssoadmin_permission_set_managed_policy_attachments_map.tf"
     ["permission_set_managed_policy_attachments_flattened"]="aws_ssoadmin_permission_set_managed_policy_attachments_flattened.tf"    
+    ["account_assignments"]="aws_ssoadmin_account_assignments.tf"
+    ["account_assignments_import"]="aws_ssoadmin_account_assignments_import.tf"
+    ["account_assignments_flattened"]="aws_ssoadmin_account_assignments_flattened.tf"
+    ["account_assignments_map"]="aws_ssoadmin_account_assignments_map.tf"
     ["managed_policies"]="aws_iam_managed_policies.tf"
     ["managed_policies_list"]="aws_iam_managed_policies_list.tf"
     ["managed_policies_map"]="aws_iam_managed_policies_map.tf"
@@ -55,8 +59,8 @@ declare -A files=(
 )
 
 declare -A usersMap
-
 declare -A groupsMap
+declare -A permissionsetsMap
 
 # Make the identityStoreId, instanceArn, accountMap and files immutable
 readonly identityStoreId
@@ -190,6 +194,9 @@ locals {
 
     write_content "${files[managed_policies_map]}" 'locals {
   managed_policies_map = {'
+
+    write_content "${files[account_assignments_map]}" 'locals {
+  account_assignments_map = {'
 }
 
 write_closing_content() {
@@ -215,6 +222,9 @@ write_closing_content() {
 }'
 
     write_content "${files[managed_policies_map]}" '  }
+}'
+
+    write_content "${files[account_assignments_map]}" '  }
 }'
 }
 # -----------------------------------------------------------------------------
@@ -306,7 +316,7 @@ process_users_list() {
     local encodedUsers=$(echo "$usersList" | jq -s -c '.' | base64)
     local decodedUsers=$(echo "$encodedUsers" | base64 --decode)
 
-    local sortedUsers=$(echo "$decodedUsers" | jq -s -c 'sort_by(.[] | .UserName)[]')
+    local sortedUsers=$(echo "$decodedUsers" | jq -c 'sort_by(.UserName)')
     local totalUsers=$(echo "$sortedUsers" | jq 'length')
     local processedUsers=0
 
@@ -1021,6 +1031,9 @@ process_permission_set() {
     
     local sanitizedPermissionSetName=$(sanitize_for_terraform "$permissionSetName")
 
+    # Add the permission set to the global associative array
+    permissionsetsMap["$permissionSetArn"]="$sanitizedPermissionSetName"
+
     generate_permission_set_resource_block "$sanitizedPermissionSetName" "$permissionSetArn" "$permissionSetName" "$permissionSetDescription" "$sortedTags" "$permissionSetRelayState" "$permissionSetSessionDuration"
     generate_permission_set_import_block "$sanitizedPermissionSetName" "$permissionSetArn"
     generate_permission_set_map_line "$sanitizedPermissionSetName"
@@ -1060,36 +1073,6 @@ process_permission_set() {
 
     # Add a closing bracket to the managed policy attachments map file
     echo "    ]," >> "${files[permission_set_managed_policy_attachments_map]}"
-
-    echo "Fetching accounts for provisioned permission set: $permissionSetArn"
-
-    # Get a list of account IDs for the given permission set
-    local accountsResponse=$(aws sso-admin list-accounts-for-provisioned-permission-set --instance-arn "$instanceArn" --permission-set-arn "$permissionSetArn" | jq -r '.AccountIds[]')
-    declare -a accountIds=($accountsResponse)
-
-    if [ "${#accountIds[@]}" -eq 0 ]; then
-        return
-    fi
-
-    # Loop through each account ID and get users and groups assigned to the permission set
-    for accountId in "${accountIds[@]}"; do
-        echo "Processing account ID: $accountId, Account Name: ${accountMap[$accountId]}"
-
-        # Get the list of users and groups assigned to the permission set in this account
-        assignmentsResponse=$(aws sso-admin list-account-assignments --instance-arn "$instanceArn" --account-id "$accountId" --permission-set-arn "$permissionSetArn")
-
-        # Parse out the principal type (user/group) and principal IDs
-        principalNames=$(echo "$assignmentsResponse" | jq -r '.AccountAssignments[] | "\(.PrincipalType): \(.PrincipalId)"')
-
-        # Debug - Display the principal type and IDs
-        echo "$principalNames"
-
-        # You can further process the principalNames or filter out users/groups as required.
-
-        # Debug
-        # echo "Finished processing account: $accountId"
-    done
-
 }
 
 fetch_and_process_users() {
@@ -1146,8 +1129,8 @@ fetch_and_process_users
 readonly -A usersMap
 fetch_and_process_groups
 readonly -A groupsMap
-fetch_and_process_permission_sets
 fetch_and_process_managed_policies
+fetch_and_process_permission_sets
 write_closing_content
 
 echo "Done!"
