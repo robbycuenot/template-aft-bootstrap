@@ -20,12 +20,17 @@ instanceArn=$(aws sso-admin list-instances --query 'Instances[0].InstanceArn' --
     exit 1
 }
 
+declare -a accountIdsSorted
 declare -A accountMap
+
 while IFS= read -r line; do
     accountId=$(echo "$line" | cut -f1)
     accountName=$(echo "$line" | cut -f2)
+    
+    accountIdsSorted+=("$accountId")
     accountMap["$accountId"]="$accountName"
-done < <(aws organizations list-accounts --query 'Accounts[].[Id, Name]' --output text)
+    
+done < <(aws organizations list-accounts --query 'Accounts[?Status==`ACTIVE`].[Id, Name]' --output text | sort -f -k2,2)
 
 declare -A files=(
     ["instances"]="aws_ssoadmin_instances.tf"
@@ -60,6 +65,7 @@ declare -A files=(
 
 declare -A usersMap
 declare -A groupsMap
+declare -a permissionsetArnsSorted
 declare -A permissionsetsMap
 
 # Make the identityStoreId, instanceArn, accountMap and files immutable
@@ -625,6 +631,43 @@ fetch_group_membership_user() {
 
 
 
+# Managed Policy Helper Functions
+# -----------------------------------------------------------------------------
+fetch_all_managed_policies() {
+    local managedPoliciesNextToken=""
+    local managedPoliciesResponses=""
+
+    while true; do
+        local managedPoliciesResponseArgs=("--scope" "AWS" "--output" "json")
+        [ -n "$managedPoliciesNextToken" ] && managedPoliciesResponseArgs+=("--starting-token" "$managedPoliciesNextToken")
+        
+        local managedPoliciesResponse=$(aws iam list-policies "${managedPoliciesResponseArgs[@]}")
+        managedPoliciesResponses+=$(jq -r '.Policies[]' <<< "$managedPoliciesResponse")
+        
+        managedPoliciesNextToken=$(jq -r '.NextToken' <<< "$managedPoliciesResponse")
+        [ "$managedPoliciesNextToken" == "null" ] && break
+    done
+
+    echo "$managedPoliciesResponses"
+}
+
+process_managed_policies_list() {
+    local managedPoliciesJson="$1"
+
+    # Extract policy names from the JSON and sort them alphabetically
+    local sortedManagedPoliciesJson=$(echo "$managedPoliciesJson" | jq -s 'sort_by(.PolicyName)')
+
+    # Write the sorted policy names to the managed_policies_list file with formatting
+    local sortedManagedPoliciesNames=$(echo "$sortedManagedPoliciesJson" | jq -r '.[].PolicyName')
+    for policyName in $sortedManagedPoliciesNames; do
+        echo "    \"$policyName\"," >> ${files[managed_policies_list]}
+        echo "    \"$policyName\" = data.aws_iam_policy.managed_policies[\"$policyName\"].arn," >> ${files[managed_policies_map]}
+    done
+}
+# -----------------------------------------------------------------------------
+
+
+
 # Permission Set Helper Functions
 # -----------------------------------------------------------------------------
 fetch_all_permission_sets() {
@@ -678,10 +721,11 @@ process_permission_sets_list() {
     # Sort permission sets by name
     sortedPermissionSets=$(for arn in "${!permissionSetDetailsMap[@]}"; do
         echo "$arn $(echo "${permissionSetDetailsMap[$arn]}" | jq -r '.PermissionSet.Name')"
-    done | sort -k2 | awk '{print $1}')
+    done | sort -f -k2 | awk '{print $1}')
 
     for permissionSetArn in $sortedPermissionSets; do
         process_permission_set "$permissionSetArn" "${permissionSetDetailsMap[$permissionSetArn]}"
+        permissionsetArnsSorted+=("$permissionSetArn")
         
         # Update progress bar
         processedPermissionSets=$((processedPermissionSets + 1))
@@ -851,38 +895,92 @@ generate_permission_set_managed_policy_attachment_import_block() {
 
 
 
-# Managed Policy Helper Functions
+# Account Assignments Helper Functions
 # -----------------------------------------------------------------------------
-fetch_all_managed_policies() {
-    local managedPoliciesNextToken=""
-    local managedPoliciesResponses=""
+fetch_all_account_assignments() {
+    local accountAssignmentsResponses=""
 
-    while true; do
-        local managedPoliciesResponseArgs=("--scope" "AWS" "--output" "json")
-        [ -n "$managedPoliciesNextToken" ] && managedPoliciesResponseArgs+=("--starting-token" "$managedPoliciesNextToken")
-        
-        local managedPoliciesResponse=$(aws iam list-policies "${managedPoliciesResponseArgs[@]}")
-        managedPoliciesResponses+=$(jq -r '.Policies[]' <<< "$managedPoliciesResponse")
-        
-        managedPoliciesNextToken=$(jq -r '.NextToken' <<< "$managedPoliciesResponse")
-        [ "$managedPoliciesNextToken" == "null" ] && break
+    # Loop through each account in accountMap
+    for accountId in "${accountIdsSorted[@]}"; do
+
+        # Fetch the list of permission sets provisioned to the account
+        local provisionedPermissionSetsResponse=$(aws sso-admin list-permission-sets-provisioned-to-account --instance-arn "$instanceArn" --account-id "$accountId" --output json)
+        local provisionedPermissionSetArns=$(jq -r '.PermissionSets[]' <<< "$provisionedPermissionSetsResponse")
+
+        for permissionSetArn in "${permissionsetArnsSorted[@]}"; do
+            # check if permissionSetArn is within provisionedPermissionSetArns
+            if [[ $provisionedPermissionSetArns =~ $permissionSetArn ]]; then
+                # If it is, fetch the account assignments for the permission set
+                local nextToken=""
+
+                while true; do
+                    local accountAssignmentArgs=("--instance-arn" "$instanceArn" "--account-id" "$accountId" "--permission-set-arn" "$permissionSetArn" "--output" "json")
+                    [ -n "$nextToken" ] && accountAssignmentArgs+=("--next-token" "$nextToken")
+                    
+                    local accountAssignmentsResponse=$(aws sso-admin list-account-assignments "${accountAssignmentArgs[@]}")
+                    accountAssignmentsResponses+=$(jq -r '.AccountAssignments[]' <<< "$accountAssignmentsResponse")
+                    
+                    nextToken=$(jq -r '.NextToken' <<< "$accountAssignmentsResponse")
+                    [ "$nextToken" == "null" ] && break
+                done
+            fi
+        done
     done
 
-    echo "$managedPoliciesResponses"
+    echo "$accountAssignmentsResponses"
 }
 
-process_managed_policies_list() {
-    local managedPoliciesJson="$1"
+process_account_assignments_list() {
+    local accountAssignmentsList="$1"
+    
+    local totalAssignments=$(echo "$accountAssignmentsList" | grep -o '"AccountId"' | wc -l)
+    local processedAssignments=0
 
-    # Extract policy names from the JSON and sort them alphabetically
-    local sortedManagedPoliciesJson=$(echo "$managedPoliciesJson" | jq -s 'sort_by(.PolicyName)')
+    # Display the total number of assignments being processed
+    echo "Processing $totalAssignments assignments:"
 
-    # Write the sorted policy names to the managed_policies_list file with formatting
-    local sortedManagedPoliciesNames=$(echo "$sortedManagedPoliciesJson" | jq -r '.[].PolicyName')
-    for policyName in $sortedManagedPoliciesNames; do
-        echo "    \"$policyName\"," >> ${files[managed_policies_list]}
-        echo "    \"$policyName\" = data.aws_iam_policy.managed_policies[\"$policyName\"].arn," >> ${files[managed_policies_map]}
-    done
+    # Initialize progress bar
+    echo -ne '[>-------------------] (0%)\r'
+
+    while read -r assignment; do
+        local accountId=$(echo "$assignment" | jq -r '.AccountId')
+        local principalType=$(echo "$assignment" | jq -r '.PrincipalType')
+        local principalId=$(echo "$assignment" | jq -r '.PrincipalId')
+        local permissionSetArn=$(echo "$assignment" | jq -r '.PermissionSetArn')
+
+        local accountName="${accountMap[$accountId]}"
+        local permissionSetName="${permissionsetsMap[$permissionSetArn]}"
+
+        # Using the principalType, decide whether to lookup in usersMap or groupsMap
+        local principalName=""
+        if [[ "$principalType" == "USER" ]]; then
+            principalName="${usersMap[$principalId]}"
+            # If not found in the usersMap, skip
+            [[ -z "$principalName" ]] && continue
+        elif [[ "$principalType" == "GROUP" ]]; then
+            principalName="${groupsMap[$principalId]}"
+            # If not found in the groupsMap, skip
+            [[ -z "$principalName" ]] && continue
+        fi
+
+        # Now, print the names instead of IDs or ARNs:
+        echo "Account Name: $accountName"
+        echo "Principal Type: $principalType"
+        echo "Principal Name: $principalName"
+        echo "Principal ID: $principalId"
+        echo "Permission Set Name: $permissionSetName"
+        echo "--------------------------------------------"
+
+        # Update progress bar
+        processedAssignments=$((processedAssignments + 1))
+        local progress=$((processedAssignments * 100 / totalAssignments))
+        local progressBar=$(printf '=%.0s' $(seq 1 $((progress / 5))))
+        echo -ne "[${progressBar:0:20}>] ($progress%)\r"
+        
+    done < <(echo "$accountAssignmentsList" | jq -c '.')
+
+    # End the progress bar with a newline and display completion message
+    echo -e "\nAccount assignment processing complete."
 }
 # -----------------------------------------------------------------------------
 
@@ -1075,6 +1173,10 @@ process_permission_set() {
     echo "    ]," >> "${files[permission_set_managed_policy_attachments_map]}"
 }
 
+process_account_assignment() {
+    echo ""
+}
+
 fetch_and_process_users() {
     local allUsers=$(fetch_all_users)
 
@@ -1118,6 +1220,17 @@ fetch_and_process_managed_policies() {
 
     process_managed_policies_list "$allManagedPolicies"
 }
+
+fetch_and_process_account_assignments() {
+    local allAccountAssignments=$(fetch_all_account_assignments)
+
+    if [ -z "$allAccountAssignments" ]; then
+        echo "No account assignments found."
+        return
+    fi
+
+    process_account_assignments_list "$allAccountAssignments"
+}
 # -----------------------------------------------------------------------------
 
 
@@ -1131,6 +1244,9 @@ fetch_and_process_groups
 readonly -A groupsMap
 fetch_and_process_managed_policies
 fetch_and_process_permission_sets
+readonly -A permissionsetsMap
+readonly -A permissionsetArnsSorted
+fetch_and_process_account_assignments
 write_closing_content
 
 echo "Done!"
