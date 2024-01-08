@@ -34,37 +34,39 @@ done < <(aws organizations list-accounts --query 'Accounts[?Status==`ACTIVE`].[I
 
 declare -A files=(
     ["instances"]="aws_ssoadmin_instances.tf"
-    ["groups"]="aws_identitystore_groups.tf"
-    ["groups_map"]="aws_identitystore_groups_map.tf"
-    ["groups_import"]="aws_identitystore_groups_import.tf"
-    ["group_memberships"]="aws_identitystore_group_memberships.tf"
-    ["group_memberships_map"]="aws_identitystore_group_memberships_map.tf"
-    ["group_memberships_map_scim"]="aws_identitystore_group_memberships_map_scim.tf"
-    ["group_memberships_flattened"]="aws_identitystore_group_memberships_flattened.tf"
-    ["group_memberships_import"]="aws_identitystore_group_memberships_import.tf"
-    ["permission_sets"]="aws_ssoadmin_permission_sets.tf"
-    ["permission_sets_map"]="aws_ssoadmin_permission_sets_map.tf"
-    ["permission_sets_import"]="aws_ssoadmin_permission_sets_import.tf"
-    ["permission_set_inline_policies"]="aws_ssoadmin_permission_set_inline_policies.tf"
-    ["permission_set_inline_policies_import"]="aws_ssoadmin_permission_set_inline_policies_import.tf"
-    ["permission_set_managed_policy_attachments"]="aws_ssoadmin_permission_set_managed_policy_attachments.tf"
-    ["permission_set_managed_policy_attachments_import"]="aws_ssoadmin_permission_set_managed_policy_attachments_import.tf"
-    ["permission_set_managed_policy_attachments_map"]="aws_ssoadmin_permission_set_managed_policy_attachments_map.tf"
-    ["permission_set_managed_policy_attachments_flattened"]="aws_ssoadmin_permission_set_managed_policy_attachments_flattened.tf"    
-    ["account_assignments"]="aws_ssoadmin_account_assignments.tf"
-    ["account_assignments_import"]="aws_ssoadmin_account_assignments_import.tf"
-    ["account_assignments_flattened"]="aws_ssoadmin_account_assignments_flattened.tf"
-    ["account_assignments_map"]="aws_ssoadmin_account_assignments_map.tf"
-    ["managed_policies"]="aws_iam_managed_policies.tf"
-    ["managed_policies_list"]="aws_iam_managed_policies_list.tf"
-    ["managed_policies_map"]="aws_iam_managed_policies_map.tf"
-    ["users"]="aws_identitystore_users.tf"
-    ["users_map"]="aws_identitystore_users_map.tf"
-    ["users_import"]="aws_identitystore_users_import.tf"
+    ["groups"]="groups/aws_identitystore_groups.tf"
+    ["groups_map"]="groups/aws_identitystore_groups_map.tf"
+    ["groups_import"]="groups/aws_identitystore_groups_import.tf"
+    ["group_memberships"]="group_memberships/aws_identitystore_group_memberships.tf"
+    ["group_memberships_map"]="group_memberships/aws_identitystore_group_memberships_map.tf"
+    ["group_memberships_map_scim"]="group_memberships/aws_identitystore_group_memberships_map_scim.tf"
+    ["group_memberships_flattened"]="group_memberships/aws_identitystore_group_memberships_flattened.tf"
+    ["group_memberships_import"]="group_memberships/aws_identitystore_group_memberships_import.tf"
+    ["permission_sets"]="permission_sets/aws_ssoadmin_permission_sets.tf"
+    ["permission_sets_map"]="permission_sets/aws_ssoadmin_permission_sets_map.tf"
+    ["permission_sets_import"]="permission_sets/aws_ssoadmin_permission_sets_import.tf"
+    ["permission_set_inline_policies"]="inline_policies/aws_ssoadmin_permission_set_inline_policies.tf"
+    ["permission_set_inline_policies_import"]="inline_policies/aws_ssoadmin_permission_set_inline_policies_import.tf"
+    ["permission_set_managed_policy_attachments"]="managed_policy_attachments/aws_ssoadmin_permission_set_managed_policy_attachments.tf"
+    ["permission_set_managed_policy_attachments_import"]="managed_policy_attachments/aws_ssoadmin_permission_set_managed_policy_attachments_import.tf"
+    ["permission_set_managed_policy_attachments_map"]="managed_policy_attachments/aws_ssoadmin_permission_set_managed_policy_attachments_map.tf"
+    ["permission_set_managed_policy_attachments_flattened"]="managed_policy_attachments/aws_ssoadmin_permission_set_managed_policy_attachments_flattened.tf"    
+    ["account_assignments"]="account_assignments/aws_ssoadmin_account_assignments.tf"
+    ["account_assignments_import"]="account_assignments/aws_ssoadmin_account_assignments_import.tf"
+    ["account_assignments_flattened"]="account_assignments/aws_ssoadmin_account_assignments_flattened.tf"
+    ["account_assignments_map"]="account_assignments/aws_ssoadmin_account_assignments_map.tf"
+    ["managed_policies"]="managed_policies/aws_iam_managed_policies.tf"
+    ["managed_policies_list"]="managed_policies/aws_iam_managed_policies_list.tf"
+    ["managed_policies_map"]="managed_policies/aws_iam_managed_policies_map.tf"
+    ["users"]="users/aws_identitystore_users.tf"
+    ["users_map"]="users/aws_identitystore_users_map.tf"
+    ["users_import"]="users/aws_identitystore_users_import.tf"
 )
 
 declare -A usersMap
+declare -a userIdsSorted
 declare -A groupsMap
+declare -a groupIdsSorted
 declare -a permissionsetArnsSorted
 declare -A permissionsetsMap
 
@@ -103,6 +105,15 @@ sanitize_for_terraform() {
 
 # File Initializing / Closing Functions
 # -----------------------------------------------------------------------------
+mkdir -p account_assignments
+mkdir -p groups
+mkdir -p group_memberships
+mkdir -p inline_policies/json
+mkdir -p managed_policies
+mkdir -p managed_policy_attachments
+mkdir -p permission_sets
+mkdir -p users
+
 write_header() {
     local file="$1"
     echo "# Generated Terraform file for AWS IAM Identity Center" > "$file"
@@ -125,7 +136,7 @@ write_initial_content() {
     write_content "${files[instances]}" 'data "aws_ssoadmin_instances" "instances" {}
 
 locals {
-    sso_instance_identity_store_id = tolist(data.aws_ssoadmin_instances.instances.identity_store_ids)[0],
+    sso_instance_identity_store_id = tolist(data.aws_ssoadmin_instances.instances.identity_store_ids)[0]
     sso_instance_arn = tolist(data.aws_ssoadmin_instances.instances.arns)[0]
 }'
 
@@ -168,7 +179,7 @@ locals {
   group_memberships_flattened = flatten([
     for group, users in local.group_memberships_map : [
       for user in users : {
-        "group" = group,
+        "group" = group
         "user"  = user
       }
     ]
@@ -179,8 +190,8 @@ locals {
   permission_set_managed_policy_attachments_flattened = flatten([
     for permission_set, managed_policies in local.permission_set_managed_policy_attachments_map : [
       for managed_policy in managed_policies : {
-        "permission_set" = permission_set,
-        "managed_policy"  = managed_policy
+        "permission_set" = permission_set
+        "managed_policy" = managed_policy
       }
     ]
   ])
@@ -190,9 +201,9 @@ locals {
   permission_set_managed_policy_attachments_map = {'
 
     write_content "${files[managed_policies]}" 'data "aws_iam_policy" "managed_policies" {
-  count = length(local.managed_policies_list)
-  
-  name = local.managed_policies_list[count.index]
+  for_each = { for policy in local.managed_policies_list : "${policy}" => policy }
+
+  name = each.value
 }'
 
     write_content "${files[managed_policies_list]}" 'locals {
@@ -345,6 +356,7 @@ process_users_list() {
 
     # End the progress bar with a newline and display completion message
     echo -e "\nUser processing complete."
+    echo ""
 }
 
 generate_user_map_line() {
@@ -495,6 +507,7 @@ process_groups_list() {
 
     # End the progress bar with a newline and display completion message
     echo -e "\nGroup processing complete."
+    echo ""
 }
 
 generate_group_map_line() {
@@ -570,20 +583,18 @@ extract_group_membership_details() {
 }
 
 generate_group_membership_map_line() {
-    local membershipUserNames="$1"
+    declare -a membershipUserNames="$1"
     local targetMembershipMapFile="$2"
 
-    for membershipUserName in $membershipUserNames; do
-        local sanitizedMembershipUserName=$(sanitize_for_terraform "$membershipUserName")
-        echo "      \"$sanitizedMembershipUserName\"," >> ${files[$targetMembershipMapFile]}
+    for membershipUserName in "${sortedMembershipUserNames[@]}"; do
+        echo "      \"$membershipUserName\"" >> ${files[$targetMembershipMapFile]}
     done
 }
 
 generate_group_membership_import_block() {
     local sanitizedGroupDisplayName="$1"
-    local membershipUserName="$2"
+    local sanitizedMembershipUserName="$2"
     local membershipId="$3"
-    local sanitizedMembershipUserName=$(sanitize_for_terraform "$membershipUserName")
     printf '%s\n' \
     "import {" \
     "  to = aws_identitystore_group_membership.controller[\"${sanitizedGroupDisplayName}___${sanitizedMembershipUserName}\"]" \
@@ -621,12 +632,6 @@ fetch_group_memberships() {
         fi
     done
 }
-
-fetch_group_membership_user() {
-    local membershipUserId="$1"
-    local membershipUser=$(aws identitystore describe-user --identity-store-id "$identityStoreId" --user-id "$membershipUserId" --output json)
-    echo "$membershipUser"
-}
 # -----------------------------------------------------------------------------
 
 
@@ -660,8 +665,8 @@ process_managed_policies_list() {
     # Write the sorted policy names to the managed_policies_list file with formatting
     local sortedManagedPoliciesNames=$(echo "$sortedManagedPoliciesJson" | jq -r '.[].PolicyName')
     for policyName in $sortedManagedPoliciesNames; do
-        echo "    \"$policyName\"," >> ${files[managed_policies_list]}
-        echo "    \"$policyName\" = data.aws_iam_policy.managed_policies[\"$policyName\"].arn," >> ${files[managed_policies_map]}
+        echo "    \"$policyName\"" >> ${files[managed_policies_list]}
+        echo "    \"$policyName\" = data.aws_iam_policy.managed_policies[\"$policyName\"].arn" >> ${files[managed_policies_map]}
     done
 }
 # -----------------------------------------------------------------------------
@@ -736,12 +741,13 @@ process_permission_sets_list() {
 
     # End the progress bar with a newline and display completion message
     echo -e "\nPermission set processing complete."
+    echo ""
 }
 
 generate_permission_set_map_line() {
     local sanitizedPermissionSetName="$1"
 
-    echo "    \"$sanitizedPermissionSetName\" = aws_ssoadmin_permission_set.$sanitizedPermissionSetName.arn," >> "${files[permission_sets_map]}"
+    echo "    \"$sanitizedPermissionSetName\" = aws_ssoadmin_permission_set.$sanitizedPermissionSetName.arn" >> "${files[permission_sets_map]}"
 }
 
 generate_permission_set_resource_block() {
@@ -819,7 +825,7 @@ generate_permission_set_inline_policy_resource_block() {
         echo "resource \"aws_ssoadmin_permission_set_inline_policy\" \"${sanitizedInlinePolicyName}\" {"
         echo "  instance_arn       = \"$instanceArn\""
         echo "  permission_set_arn = aws_ssoadmin_permission_set.${sanitizedPermissionSetName}.arn"
-        echo "  inline_policy      = file(\"inline_policies/${sanitizedInlinePolicyName}.json\")"
+        echo "  inline_policy      = file(\"json/${sanitizedInlinePolicyName}.json\")"
         echo "}"
     } >&3  # Redirect the block to file descriptor 3
 
@@ -853,7 +859,7 @@ generate_permission_set_inline_policy_json_file() {
     mkdir -p inline_policies
 
     # Save the policy document to a JSON file
-    echo "$policyDocument" | jq '.' > "inline_policies/${sanitizedInlinePolicyName}.json"
+    echo "$policyDocument" | jq '.' > "inline_policies/json/${sanitizedInlinePolicyName}.json"
 }
 
 generate_permission_set_managed_policy_attachment_map_line() {
@@ -870,7 +876,7 @@ generate_permission_set_managed_policy_attachment_map_line() {
     }
 
     # Append the managed policy to the permission set's array
-    echo "      \"$sanitizedManagedPolicyName\"," >&3
+    echo "      \"$sanitizedManagedPolicyName\"" >&3
 }
 
 generate_permission_set_managed_policy_attachment_import_block() {
@@ -886,7 +892,8 @@ generate_permission_set_managed_policy_attachment_import_block() {
     local importBlock="import {
   to = ${terraformResourceAddress}
   id = \"${managedPolicyArn},${permissionSetArn},${instanceArn}\"
-}"
+}
+"
     
     # Append the generated import block to an imports file:
     echo "$importBlock" >> "${files[permission_set_managed_policy_attachments_import]}"
@@ -910,19 +917,12 @@ fetch_all_account_assignments() {
         for permissionSetArn in "${permissionsetArnsSorted[@]}"; do
             # check if permissionSetArn is within provisionedPermissionSetArns
             if [[ $provisionedPermissionSetArns =~ $permissionSetArn ]]; then
-                # If it is, fetch the account assignments for the permission set
-                local nextToken=""
-
-                while true; do
-                    local accountAssignmentArgs=("--instance-arn" "$instanceArn" "--account-id" "$accountId" "--permission-set-arn" "$permissionSetArn" "--output" "json")
-                    [ -n "$nextToken" ] && accountAssignmentArgs+=("--next-token" "$nextToken")
-                    
-                    local accountAssignmentsResponse=$(aws sso-admin list-account-assignments "${accountAssignmentArgs[@]}")
-                    accountAssignmentsResponses+=$(jq -r '.AccountAssignments[]' <<< "$accountAssignmentsResponse")
-                    
-                    nextToken=$(jq -r '.NextToken' <<< "$accountAssignmentsResponse")
-                    [ "$nextToken" == "null" ] && break
-                done
+                
+                # Fetch account assignments for the permission set filtered by PrincipalType (GROUPS first)
+                accountAssignmentsResponses+=$(fetch_assignments_by_principal_type "GROUP" "$accountId" "$permissionSetArn")
+                # Fetch account assignments for the permission set filtered by PrincipalType (USERS next)
+                accountAssignmentsResponses+=$(fetch_assignments_by_principal_type "USER" "$accountId" "$permissionSetArn")
+                
             fi
         done
     done
@@ -930,58 +930,155 @@ fetch_all_account_assignments() {
     echo "$accountAssignmentsResponses"
 }
 
+fetch_assignments_by_principal_type() {
+    local principalType="$1"
+    local accountId="$2"
+    local permissionSetArn="$3"
+    
+    local response=""
+    local nextToken=""
+    while true; do
+        local accountAssignmentArgs=("--instance-arn" "$instanceArn" "--account-id" "$accountId" "--permission-set-arn" "$permissionSetArn" "--query" "{Assignments:AccountAssignments[?PrincipalType=='$principalType'], NextToken:NextToken}" "--output" "json")
+        [ -n "$nextToken" ] && accountAssignmentArgs+=("--next-token" "$nextToken")
+        
+        local accountAssignmentsResponse=$(aws sso-admin list-account-assignments "${accountAssignmentArgs[@]}")
+        response+=$(jq -r '.Assignments[]' <<< "$accountAssignmentsResponse")
+        
+        nextToken=$(jq -r '.NextToken' <<< "$accountAssignmentsResponse")
+        [ "$nextToken" == "null" ] && break
+    done
+
+    echo "$response"
+}
+
+# Function to extract account assignment data from the assignment string
+extract_account_assignment_data() {
+    local assignment="$1"
+    local accountId=$(echo "$assignment" | jq -r '.AccountId')
+    local principalType=$(echo "$assignment" | jq -r '.PrincipalType')
+    local principalId=$(echo "$assignment" | jq -r '.PrincipalId')
+    local permissionSetArn=$(echo "$assignment" | jq -r '.PermissionSetArn')
+    echo "$accountId|$principalType|$principalId|$permissionSetArn"
+}
+
+# Function to accumulate account assignment data in a structured manner
+accumulate_account_assignments() {
+    local assignment="$1"
+    local accountId principalType principalId permissionSetArn
+    IFS='|' read -ra parts <<< "$(extract_account_assignment_data "$assignment")"
+    accountId="${parts[0]}"
+    principalType="${parts[1]}"
+    principalId="${parts[2]}"
+    permissionSetArn="${parts[3]}"
+
+    local accountName="${accountMap[$accountId]}"
+    local permissionSetName="${permissionsetsMap[$permissionSetArn]}"
+    local principalName=""
+    [[ "$principalType" == "USER" ]] && principalName="${usersMap[$principalId]}"
+    [[ "$principalType" == "GROUP" ]] && principalName="${groupsMap[$principalId]}"
+    local key="$accountName|$permissionSetName|$principalType"
+    if [[ ! ${accumulator["$key"]+_} ]]; then
+        orderedKeys+=("$key")
+    fi
+    accumulator["$key"]+="$principalName\n"
+}
+
+# Function to sort and structure the accumulated account assignment data for printing
+sort_and_structure_account_assignments() {
+    for key in "${orderedKeys[@]}"; do
+        IFS='|' read -ra parts <<< "$key"
+        local sortedPrincipals=$(echo -e "${accumulator[$key]}" | sort -uf | tr '\n' '|' | sed 's/|$//')
+        structuredOutput["$key"]="$sortedPrincipals"
+    done
+}
+
+# Function to generate and print the account assignments
+generate_account_assignments() {
+    local lastAccount=""
+    local lastPermissionSet=""
+    local lastType=""
+
+    for index in "${!orderedKeys[@]}"; do
+        local key="${orderedKeys[$index]}"
+        IFS='|' read -ra parts <<< "$key"
+        local nextKey="${orderedKeys[$index + 1]}"
+        [[ $index -eq $((${#orderedKeys[@]} - 1)) ]] && nextKey=""
+        IFS='|' read -ra nextParts <<< "$nextKey"
+
+        local isLastTypeForPermissionSet=false
+        [[ "${parts[1]}" != "${nextParts[1]}" || -z "$nextKey" ]] && isLastTypeForPermissionSet=true
+        local isLastPermissionSetForAccount=false
+        [[ "${parts[0]}" != "${nextParts[0]}" || -z "$nextKey" ]] && isLastPermissionSetForAccount=true
+
+        if [[ "$lastAccount" != "${parts[0]}" ]]; then
+            echo "    \"${parts[0]}\" = {" >> "${files[account_assignments_map]}"
+            lastAccount="${parts[0]}"
+            lastPermissionSet=""
+        fi
+
+        if [[ "$lastPermissionSet" != "${parts[1]}" ]]; then
+            echo "      \"${parts[1]}\" = {" >> "${files[account_assignments_map]}"
+            lastPermissionSet="${parts[1]}"
+            lastType=""
+        fi
+
+        if [[ "$lastType" != "${parts[2]}" ]]; then
+            echo "        \"${parts[2]}\" = [" >> "${files[account_assignments_map]}"
+            lastType="${parts[2]}"
+        fi
+
+        IFS='|' read -ra principals <<< "${structuredOutput[$key]}"
+        for principal in "${principals[@]}"; do
+            if [[ -n "$principal" ]]; then
+                echo "          \"$principal\"" >> "${files[account_assignments_map]}"
+            fi
+        done
+
+        [[ "$lastType" != "${nextParts[2]}" || "$lastPermissionSet" != "${nextParts[1]}" || "$lastAccount" != "${nextParts[0]}" || -z "$nextKey" ]] && echo "        ]" >> "${files[account_assignments_map]}"
+        $isLastTypeForPermissionSet && echo "      }" >> "${files[account_assignments_map]}"
+        $isLastPermissionSetForAccount && echo "    }" >> "${files[account_assignments_map]}"
+    done
+}
+
+# Main function to process account assignments list
+# Main function to process account assignments list
 process_account_assignments_list() {
     local accountAssignmentsList="$1"
-    
-    local totalAssignments=$(echo "$accountAssignmentsList" | grep -o '"AccountId"' | wc -l)
+    declare -A accumulator
+    declare -A structuredOutput
+    declare -a orderedKeys
+
+    # Encode and then decode the JSON to address potential formatting issues
+    local encodedAssignments=$(echo "$accountAssignmentsList" | jq -s -c '.' | base64)
+    local decodedAssignments=$(echo "$encodedAssignments" | base64 --decode)
+
+    local totalAssignments=$(echo "$decodedAssignments" | jq 'length')
     local processedAssignments=0
 
     # Display the total number of assignments being processed
-    echo "Processing $totalAssignments assignments:"
+    echo "Processing $totalAssignments account assignments:"
 
     # Initialize progress bar
     echo -ne '[>-------------------] (0%)\r'
 
     while read -r assignment; do
-        local accountId=$(echo "$assignment" | jq -r '.AccountId')
-        local principalType=$(echo "$assignment" | jq -r '.PrincipalType')
-        local principalId=$(echo "$assignment" | jq -r '.PrincipalId')
-        local permissionSetArn=$(echo "$assignment" | jq -r '.PermissionSetArn')
-
-        local accountName="${accountMap[$accountId]}"
-        local permissionSetName="${permissionsetsMap[$permissionSetArn]}"
-
-        # Using the principalType, decide whether to lookup in usersMap or groupsMap
-        local principalName=""
-        if [[ "$principalType" == "USER" ]]; then
-            principalName="${usersMap[$principalId]}"
-            # If not found in the usersMap, skip
-            [[ -z "$principalName" ]] && continue
-        elif [[ "$principalType" == "GROUP" ]]; then
-            principalName="${groupsMap[$principalId]}"
-            # If not found in the groupsMap, skip
-            [[ -z "$principalName" ]] && continue
-        fi
-
-        # Now, print the names instead of IDs or ARNs:
-        echo "Account Name: $accountName"
-        echo "Principal Type: $principalType"
-        echo "Principal Name: $principalName"
-        echo "Principal ID: $principalId"
-        echo "Permission Set Name: $permissionSetName"
-        echo "--------------------------------------------"
+        accumulate_account_assignments "$assignment"
 
         # Update progress bar
         processedAssignments=$((processedAssignments + 1))
         local progress=$((processedAssignments * 100 / totalAssignments))
         local progressBar=$(printf '=%.0s' $(seq 1 $((progress / 5))))
         echo -ne "[${progressBar:0:20}>] ($progress%)\r"
-        
     done < <(echo "$accountAssignmentsList" | jq -c '.')
+
+    sort_and_structure_account_assignments
+    generate_account_assignments
 
     # End the progress bar with a newline and display completion message
     echo -e "\nAccount assignment processing complete."
+    echo ""
 }
+
 # -----------------------------------------------------------------------------
 
 
@@ -1002,6 +1099,7 @@ process_user() {
 
     # Update the global associative array of users
     usersMap["$userId"]="$sanitizedUserName"
+    userIdsSorted+=("$userId")
 
     # Check if the user is SCIM managed
     isSCIM=$(echo "$user_json" | jq 'has("ExternalIds")')
@@ -1053,6 +1151,7 @@ process_group() {
 
     # Update the global associative array of groups
     groupsMap["$groupId"]="$sanitizedGroupDisplayName"
+    groupIdsSorted+=("$groupId")
 
     # Check if the group is SCIM managed
     local isSCIM=$(jq 'has("ExternalIds")' <<< "$group_json")
@@ -1067,8 +1166,6 @@ process_group() {
 
     generate_group_map_line "$sanitizedGroupDisplayName" "$isSCIM"
 
-
-
     # Group memberships are processed as a nested
     # function within group processing to minimize the
     # number of API calls made to AWS.
@@ -1079,17 +1176,19 @@ process_group() {
     [ -z "$memberships" ] && return
 
     # Process each membership's data
-    local membershipUsers=""
+    declare -a membershipUsers
     process_group_membership memberships "$sanitizedGroupDisplayName" membershipUsers "$isSCIM"
 
-    # Sort membership users and generate membership mapping
-    local sortedMembershipUsers=$(echo "$membershipUsers" | jq -s -c 'sort_by(.UserName)[]')
-    local membershipUserNames=$(echo $sortedMembershipUsers | jq -r '.UserName')
+    # Sort membership users
+    declare -a sortedMembershipUserNames
+    IFS=$'\n' sortedMembershipUserNames=($(printf "%s\n" "${membershipUsers[@]}" | sort -f))
+    unset IFS
+
     local targetMembershipMapFile=$($isSCIM && echo "group_memberships_map_scim" || echo "group_memberships_map")
     
     echo "    \"$sanitizedGroupDisplayName\" = [" >> ${files[$targetMembershipMapFile]}
-    generate_group_membership_map_line "$membershipUserNames" "$targetMembershipMapFile"
-    echo "    ]," >> "${files[$targetMembershipMapFile]}"
+    generate_group_membership_map_line "$sortedMembershipUserNames" "$targetMembershipMapFile"
+    echo "    ]" >> "${files[$targetMembershipMapFile]}"
 }
 
 # Child process of process_group() to minimize API calls
@@ -1101,12 +1200,11 @@ process_group_membership() {
 
     for membership in "${membershipsRef[@]}"; do
         read membershipId membershipUserId <<< $(extract_group_membership_details "$membership")
-        membershipUser=$(fetch_group_membership_user "$membershipUserId")
-        membershipUsersRef+=$membershipUser
+        sanitizedMembershipUserName=${usersMap["$membershipUserId"]}
+        membershipUsersRef+=($sanitizedMembershipUserName)
 
         if ! $isSCIM; then
-            local membershipUserName=$(jq -r '.UserName' <<< "$membershipUser")
-            generate_group_membership_import_block "$sanitizedGroupDisplayName" "$membershipUserName" "$membershipId"
+            generate_group_membership_import_block "$sanitizedGroupDisplayName" "$sanitizedMembershipUserName" "$membershipId"
         fi
     done
 }
@@ -1170,11 +1268,7 @@ process_permission_set() {
     done
 
     # Add a closing bracket to the managed policy attachments map file
-    echo "    ]," >> "${files[permission_set_managed_policy_attachments_map]}"
-}
-
-process_account_assignment() {
-    echo ""
+    echo "    ]" >> "${files[permission_set_managed_policy_attachments_map]}"
 }
 
 fetch_and_process_users() {
@@ -1186,6 +1280,9 @@ fetch_and_process_users() {
     fi
 
     process_users_list "$allUsers"
+
+    readonly -A usersMap
+    readonly -a userIdsSorted
 }
 
 fetch_and_process_groups() {
@@ -1197,17 +1294,9 @@ fetch_and_process_groups() {
     fi
 
     process_groups_list "$allGroups"
-}
 
-fetch_and_process_permission_sets() {
-    local allPermissionSets=$(fetch_all_permission_sets)
-
-    if [ -z "$allPermissionSets" ]; then
-        echo "No permission sets found."
-        return
-    fi
-
-    process_permission_sets_list "$allPermissionSets"
+    readonly -A groupsMap
+    readonly -a groupIdsSorted
 }
 
 fetch_and_process_managed_policies() {
@@ -1221,7 +1310,22 @@ fetch_and_process_managed_policies() {
     process_managed_policies_list "$allManagedPolicies"
 }
 
+fetch_and_process_permission_sets() {
+    local allPermissionSets=$(fetch_all_permission_sets)
+
+    if [ -z "$allPermissionSets" ]; then
+        echo "No permission sets found."
+        return
+    fi
+
+    process_permission_sets_list "$allPermissionSets"
+    
+    readonly -A permissionsetsMap
+    readonly -a permissionsetArnsSorted
+}
+
 fetch_and_process_account_assignments() {
+    echo "Retrieving account assignments... This may take a while"
     local allAccountAssignments=$(fetch_all_account_assignments)
 
     if [ -z "$allAccountAssignments" ]; then
@@ -1239,15 +1343,10 @@ fetch_and_process_account_assignments() {
 # -----------------------------------------------------------------------------
 write_initial_content
 fetch_and_process_users
-readonly -A usersMap
 fetch_and_process_groups
-readonly -A groupsMap
 fetch_and_process_managed_policies
 fetch_and_process_permission_sets
-readonly -A permissionsetsMap
-readonly -A permissionsetArnsSorted
 fetch_and_process_account_assignments
 write_closing_content
-
 echo "Done!"
 # -----------------------------------------------------------------------------

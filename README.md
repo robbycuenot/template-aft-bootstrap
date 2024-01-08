@@ -47,8 +47,8 @@ graph LR
     A --creates repos\nfrom templates--> github-aft
     B --> G
     B --> H
-    B --> global-customizations
-    B --> account-customizations
+    G --creates\nworkspace--> I
+    G --creates\nworkspace--> J
     J --creates\nworkspace--> C
     github-aft --repos link\nto workspaces--> tf-example-org-aft
     P --repo links\nto workspace--> C
